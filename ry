@@ -308,23 +308,32 @@
         Lampa.Component.add('multi_embed_component', MultiEmbedComponent);
     }
 
-    function openMultiEmbed(movie) {
-        Lampa.Activity.push({ url: '', title: 'Multi-Embed Sources', component: 'multi_embed_component', movie: movie, page: 1 });
+    function openAutoEmbed(movie) {
+        const tmdbId = movie.id;
+        const isSeries = !!(movie.name && movie.first_air_date);
+        const season = movie.season_number || movie.season || 1;
+        const episode = movie.episode_number || movie.episode || 1;
+        
+        const url = isSeries 
+            ? `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`
+            : `https://autoembed.co/movie/tmdb/${tmdbId}`;
+        
+        Lampa.Player.play({ url: url, title: movie.title || movie.name, iframe: true });
     }
 
     Lampa.Listener.follow('full', function(e) {
         if (e.type !== 'complite') return;
         var render = e.object.activity.render();
         var movie = e.data.movie;
-        if (render.find('.multi-embed-btn').length) return;
+        if (render.find('.autoembed-btn').length) return;
 
-        var btn = $('<div class="full-start__button selector multi-embed-btn" data-subtitle="Multi-Embed Sources">🌐 Multi-Embed</div>');
-        btn.on('hover:enter', function() { openMultiEmbed(movie); });
+        var btn = $('<div class="full-start__button selector autoembed-btn" data-subtitle="AutoEmbed">⚡ Play</div>');
+        btn.on('hover:enter', function() { openAutoEmbed(movie); });
 
         var playBtn = render.find('.button--play');
         if (playBtn.length) playBtn.before(btn);
         else render.find('.full-start__buttons').append(btn);
     });
 
-    console.log('[Multi-Embed] Plugin initialized.');
+    console.log('[AutoEmbed] Plugin initialized.');
 })();
