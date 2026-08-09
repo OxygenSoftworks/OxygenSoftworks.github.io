@@ -1,226 +1,193 @@
 (function() {
     'use strict';
+    if (window.VixSrcLampaPlugin) return;
+    window.VixSrcLampaPlugin = true;
 
-    if (window.SootioLampaPlugin) return;
-    window.SootioLampaPlugin = true;
+    // VixSrc Base URL (from the Sootio repository)
+    const BASE_URL = 'https://vixsrc.to';
 
-    // 1. Sootio Public Backend Configuration (Enables ALL HTTP Providers for free)
-    const sootioConfig = {
-        DebridServices: [{
-            provider: "httpstreaming",
-            http4khdhub: true, httpHDHub4u: true, httpUHDMovies: true,
-            httpMoviesDrive: true, httpMKVCinemas: true, httpMalluMv: true,
-            httpCineDoze: true, httpVixSrc: true, httpMoviesMod: true,
-            httpMoviesLeech: true, httpAnimeFlix: true, http111477: true,
-            httpXDMovies: true, httpPixeldrain: true, httpMkvBase: true,
-            httpVadapav: true, enableProxy: false, proxyUrl: "", proxyPassword: ""
-        }],
-        Languages: [], 
-        Resolutions: [],
-        Scrapers: [],
-        IndexerScrapers: [],
-        ScrapersConfigured: true,
-        minSize: 0,
-        maxSize: 200,
-        ShowCatalog: false,
-        ProxyApplyAll: false
-    };
-
-    // Encode the config to query the public Stremio-compatible endpoint
-    const CONFIG_STRING = encodeURIComponent(JSON.stringify(sootioConfig));
-    const BASE_URL = `https://sooti.info/${CONFIG_STRING}`;
-
-    // --- SMART SELECTION HELPERS ---
-    function getResolutionRank(resolution) {
-        if (!resolution) return 0;
-        const r = resolution.toLowerCase();
-        if (r.includes('2160') || r.includes('4k') || r.includes('uhd')) return 4;
-        if (r.includes('1440') || r.includes('2k')) return 3;
-        if (r.includes('1080')) return 2;
-        if (r.includes('720')) return 1;
-        return 0;
-    }
-
-    function parseSizeMB(sizeStr) {
-        if (!sizeStr) return 0;
-        const match = sizeStr.toString().match(/([\d.]+)\s*(GB|MB|TB|KB)/i);
-        if (!match) return 0;
-        let val = parseFloat(match[1]);
-        const unit = match[2].toUpperCase();
-        if (unit === 'TB') val *= 1024 * 1024;
-        else if (unit === 'GB') val *= 1024;
-        else if (unit === 'KB') val /= 1024;
-        return val;
-    }
-
-    // Prioritize English Dubs/Subs without strictly filtering others out
-    function getEnglishRank(title, behaviorHints) {
-        const text = (title + ' ' + JSON.stringify(behaviorHints || {})).toLowerCase();
-        let rank = 0;
-        
-        // High priority for English tags
-        if (text.includes('english') || text.includes('eng') || text.includes('🇬🇧') || text.includes('🇺🇸')) {
-            rank += 100;
+    function buildPageUrl(tmdbId, type, season, episode) {
+        if (type === 'series' && season && episode) {
+            return `${BASE_URL}/tv/${tmdbId}/${season}/${episode}`;
         }
-        // Bonus for "Dub" or "Sub" in English
-        if (text.includes('dub') || text.includes('dubbed')) rank += 20;
-        if (text.includes('sub') || text.includes('subbed')) rank += 10;
+        return `${BASE_URL}/movie/${tmdbId}`;
+    }
 
-        // Penalty for non-English languages
-        const nonEnglish = ['hindi', 'russian', 'spanish', 'french', 'german', 'italian', 'portuguese', 'korean', 'japanese', 'chinese', 'arabic', 'turkish', 'hindi dub', 'latino', 'tamil', 'telugu', 'polish', 'ukrainian', 'czech', 'hungarian', 'romanian'];
+    function parseHeightFromPlaylist(playlistText) {
+        let maxHeight = 0;
+        const regex = /RESOLUTION=\d+x(\d+)/gi;
+        let m;
+        while ((m = regex.exec(playlistText)) !== null) {
+            const h = parseInt(m[1], 10);
+            if (!Number.isNaN(h) && h > maxHeight) maxHeight = h;
+        }
+        return maxHeight || undefined;
+    }
+
+    function parseLanguagesFromPlaylist(playlistText) {
+        const langs = new Set();
+        const regex = /LANGUAGE="([a-z]{2})"/gi;
+        let m;
+        while ((m = regex.exec(playlistText)) !== null) {
+            langs.add(m[1].toLowerCase());
+        }
+        return Array.from(langs);
+    }
+
+    // Smart English Prioritization (Does not filter, just sorts to the top)
+    function getEnglishRank(title, langs) {
+        let rank = 0;
+        const text = (title + ' ' + (langs || []).join(' ')).toLowerCase();
+        
+        // Bonus for English
+        if (text.includes('english') || text.includes('eng') || text.includes('en')) rank += 100;
+        if (text.includes('dub')) rank += 20;
+        if (text.includes('sub')) rank += 10;
+        
+        // Penalty for foreign languages and dual-audio
+        const nonEnglish = ['hindi', 'russian', 'spanish', 'french', 'german', 'italian', 'portuguese', 'korean', 'japanese', 'chinese', 'arabic', 'turkish', 'latino', 'tamil', 'telugu', 'polish', 'ukrainian'];
         for (const lang of nonEnglish) {
             if (text.includes(lang)) rank -= 100;
         }
-        
-        // Penalty for Dual/Multi audio (often annoying)
-        if (text.includes('dual audio') || text.includes('multi-audio') || text.includes('dual-audio') || text.includes('multi')) {
-            rank -= 50;
-        }
+        if (text.includes('dual audio') || text.includes('multi-audio') || text.includes('dual-audio') || text.includes('multi')) rank -= 50;
         
         return rank;
     }
 
-    function selectBestStream(streams) {
-        if (!streams || streams.length === 0) return null;
+    async function fetchVixSrcStreams(movie, season, episode) {
+        // Lampa uses TMDB IDs internally, which VixSrc supports directly
+        const tmdbId = movie.id; 
+        const type = movie.name ? 'series' : 'movie';
+        const pageUrl = buildPageUrl(tmdbId, type, season, episode);
 
-        // Sort: English Dubs/Subs -> Highest Quality -> Smallest File Size (Fastest Speed)
-        streams.sort((a, b) => {
-            // 1. Prioritize English Dubs/Subs
-            const langRankA = getEnglishRank(a.title, a.behaviorHints);
-            const langRankB = getEnglishRank(b.title, b.behaviorHints);
-            if (langRankA !== langRankB) return langRankB - langRankA;
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+        };
 
-            // 2. Quality (4K > 1080p)
-            const rankA = getResolutionRank(a.resolution || a.title);
-            const rankB = getResolutionRank(b.resolution || b.title);
-            if (rankA !== rankB) return rankB - rankA; 
-
-            // 3. Speed/Size (Smallest first for fast buffering)
-            const sizeA = parseSizeMB(a.size || a.title);
-            const sizeB = parseSizeMB(b.size || b.title);
-            if (sizeA > 0 && sizeB > 0 && sizeA !== sizeB) return sizeA - sizeB; 
+        try {
+            const response = await fetch(pageUrl, { headers });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
+            const html = await response.text();
+            
+            // Extract token, expires, url from HTML
+            const tokenMatch = html.match(/['"]token['"]\s*:\s*['"]([^'"]+)['"]/i);
+            const expiresMatch = html.match(/['"]expires['"]\s*:\s*['"]([^'"]+)['"]/i);
+            const urlMatch = html.match(/url\s*:\s*['"]([^'"]+)['"]/i);
+
+            if (!tokenMatch || !expiresMatch || !urlMatch) {
+                // Fallback: Play as an Iframe (VixSrc is a famous iframe provider)
+                return [{
+                    name: 'VixSrc Embed',
+                    title: `${movie.title || movie.name} (VixSrc Embed)\n🔗 Direct Player`,
+                    url: pageUrl,
+                    iframe: true
+                }];
+            }
+
+            const baseUrl = new URL(urlMatch[1]);
+            const playlistUrl = new URL(`${baseUrl.origin}${baseUrl.pathname}.m3u8${baseUrl.search}`);
+            playlistUrl.searchParams.set('token', tokenMatch[1]);
+            playlistUrl.searchParams.set('expires', expiresMatch[1]);
+            playlistUrl.searchParams.set('h', '1');
+
+            const playlistRes = await fetch(playlistUrl.toString(), { headers: { ...headers, Referer: pageUrl } });
+            let playlistText = '';
+            if (playlistRes.ok) playlistText = await playlistRes.text();
+
+            const height = playlistText ? parseHeightFromPlaylist(playlistText) : undefined;
+            const languages = playlistText ? parseLanguagesFromPlaylist(playlistText) : [];
+            const title = `VixSrc ${height || 'Auto'}`;
+
+            return [{
+                name: 'VixSrc',
+                title: `${movie.title || movie.name}\n🔗 ${title}`,
+                url: playlistUrl.toString(),
+                resolution: height ? `${height}p` : undefined,
+                languages,
+                behaviorHints: { bingeGroup: 'vixsrc-streams' }
+            }];
+
+        } catch (error) {
+            console.error('[VixSrc] Error fetching streams:', error);
+            // Fallback to iframe if direct extraction fails
+            return [{
+                name: 'VixSrc Embed',
+                title: `${movie.title || movie.name} (VixSrc Embed)\n🔗 Direct Player`,
+                url: pageUrl,
+                iframe: true
+            }];
+        }
+    }
+
+    async function playVixSrcAuto(movie, season, episode) {
+        Lampa.Noty.show('🔍 Fetching VixSrc streams...');
+        
+        const streams = await fetchVixSrcStreams(movie, season, episode);
+        if (!streams || streams.length === 0) {
+            Lampa.Noty.show('❌ No streams found from VixSrc.');
+            return;
+        }
+
+        // Sort by English priority
+        streams.sort((a, b) => {
+            const rankA = getEnglishRank(a.title, a.languages);
+            const rankB = getEnglishRank(b.title, b.languages);
+            if (rankA !== rankB) return rankB - rankA;
             return 0;
         });
 
-        return streams[0];
-    }
+        const best = streams[0];
+        Lampa.Noty.show('▶️ Playing: ' + best.name);
 
-    // --- FETCH IMDB ID (Lampa uses TMDB by default, Sootio requires IMDB) ---
-    function getImdbId(movie, callback) {
-        if (movie.imdb_id) return callback(movie.imdb_id);
-        
-        const type = movie.name ? 'tv' : 'movie';
-        const url = `https://api.themoviedb.org/3/${type}/${movie.id}?api_key=${Lampa.TMDB.api_key}&append_to_response=external_ids`;
-        
-        const network = new Lampa.Reguest();
-        network.timeout(10000);
-        network.native(url, function(res) {
-            try {
-                const data = typeof res === 'string' ? JSON.parse(res) : res;
-                if (data && data.external_ids && data.external_ids.imdb_id) {
-                    callback(data.external_ids.imdb_id);
-                } else {
-                    callback(null);
-                }
-            } catch(e) { callback(null); }
-        }, function() { callback(null); });
-    }
-
-    // --- CORE FETCH AND PLAY LOGIC ---
-    function playSootioAuto(movie, season, episode) {
-        getImdbId(movie, function(imdbId) {
-            if (!imdbId) return Lampa.Noty.show('❌ No IMDB ID found for this title.');
-
-            const isSeries = !!season && !!episode;
-            const type = isSeries ? 'series' : 'movie';
-            
-            let queryUrl = `${BASE_URL}/stream/${type}/${imdbId}.json`;
-            if (isSeries) {
-                queryUrl = `${BASE_URL}/stream/series/${imdbId}:${season}:${episode}.json`;
-            }
-
-            Lampa.Noty.show('🔍 Searching Sootio providers for best stream...');
-
-            const network = new Lampa.Reguest();
-            network.timeout(30000);
-            network.native(queryUrl, function(resp) {
-                try {
-                    const data = typeof resp === 'string' ? JSON.parse(resp) : resp;
-                    if (data && data.streams && data.streams.length > 0) {
-                        // Filter out Sootio's donation banners
-                        const validStreams = data.streams.filter(s => !((s.title || '').includes('SUPPORT SOOTIO') || s.externalUrl));
-                        const best = selectBestStream(validStreams);
-                        
-                        if (best && best.url) {
-                            const titleShort = (best.title || 'Auto').split('\n')[0].substring(0, 60) + '...';
-                            Lampa.Noty.show('▶️ Playing: ' + titleShort);
-                            
-                            // Map Stremio subtitles to Lampa format
-                            const subs = (best.subtitles || []).map(sub => ({
-                                label: sub.lang || sub.title || 'Subtitles',
-                                url: sub.url
-                            }));
-
-                            const entry = {
-                                url: best.url,
-                                title: movie.title || movie.name,
-                                subtitles: subs
-                            };
-                            Lampa.Player.play(entry);
-                            Lampa.Player.playlist([entry]);
-                        } else {
-                            Lampa.Noty.show('⚠️ No streams found.');
-                        }
-                    } else {
-                        Lampa.Noty.show('❌ No streams found from Sootio.');
-                    }
-                } catch (err) {
-                    console.error(err);
-                    Lampa.Noty.show('❌ Error parsing Sootio response.');
-                }
-            }, function(err) {
-                Lampa.Noty.show('❌ Failed to fetch Sootio streams.');
-            }, null, {
-                dataType: 'text', 
-                headers: { 'Accept': 'application/json' }
+        if (best.iframe) {
+            // Lampa can play iframes natively
+            Lampa.Player.play({
+                url: best.url,
+                title: movie.title || movie.name,
+                iframe: true
             });
-        });
+        } else {
+            const entry = {
+                url: best.url,
+                title: movie.title || movie.name,
+                subtitles: []
+            };
+            Lampa.Player.play(entry);
+            Lampa.Player.playlist([entry]);
+        }
     }
 
     // --- LAMPA UI INTEGRATION ---
-
-    // 1. Register as an "Online" source (Shows up when you click the "Online" tab for TV Shows/Movies)
     if (Lampa.Online && Lampa.Online.register) {
-        Lampa.Online.register('sootio_auto', {
-            title: '⚡ Sootio Auto',
+        Lampa.Online.register('vixsrc_auto', {
+            title: '🎬 VixSrc Auto',
             search: function(movie, oncomplite) {
                 const season = movie.season_number || movie.season;
                 const episode = movie.episode_number || movie.episode;
-                playSootioAuto(movie, season, episode);
+                playVixSrcAuto(movie, season, episode);
                 if (oncomplite) oncomplite([]);
             },
-            onContextMenu: function() { return { name: '⚡ Sootio Auto' }; }
+            onContextMenu: function() { return { name: '🎬 VixSrc Auto' }; }
         });
     }
 
-    // 2. Inject a Quick-Play Button on the Movie/Show Details Page
     Lampa.Listener.follow('full', function(e) {
         if (e.type !== 'complite') return;
-        
         const render = e.object.activity.render();
         const movie = e.data.movie;
-        
-        if (render.find('.sootio-auto-btn').length) return;
+        if (render.find('.vixsrc-auto-btn').length) return;
 
         const btn = $(`
-            <div class="full-start__button selector sootio-auto-btn" data-subtitle="Sootio Auto-Play">
-                ⚡ Sootio Auto
+            <div class="full-start__button selector vixsrc-auto-btn" data-subtitle="VixSrc Auto-Play">
+                🎬 VixSrc Auto
             </div>
         `);
 
         btn.on('hover:enter', function() {
-            playSootioAuto(movie); 
+            const season = movie.season_number || movie.season;
+            const episode = movie.episode_number || movie.episode;
+            playVixSrcAuto(movie, season, episode);
         });
 
         const playBtn = render.find('.button--play');
@@ -228,5 +195,5 @@
         else render.find('.full-start__buttons').append(btn);
     });
 
-    console.log('[Sootio Auto] Plugin initialized.');
+    console.log('[VixSrc Auto] Plugin initialized.');
 })();
