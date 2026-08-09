@@ -3,7 +3,7 @@
     if (window.MultiEmbedPlugin) return;
     window.MultiEmbedPlugin = true;
 
-    // --- 1. RELIABLE IFRAME SOURCES ---
+    // --- 1. RELIABLE IFRAME SOURCES WITH DIRECT STREAM SUPPORT ---
     function getSources(movie) {
         const tmdbId = movie.id;
         const isSeries = !!(movie.name && movie.first_air_date);
@@ -12,40 +12,174 @@
 
         const sources = [];
 
+        // Primary sources - tried first
         if (isSeries) {
-            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}` });
-            sources.push({ name: 'VidSrc.cc', url: `https://vidsrc.cc/embed/tv/${tmdbId}/${season}/${episode}` });
-            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}` });
-            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}` });
-            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}` });
-            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}` });
-            sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}` });
-            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}` });
-            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}` });
+            // VidSrc.to - Often provides direct HLS
+            sources.push({ 
+                name: 'VidSrc.to', 
+                url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`,
+                type: 'iframe',
+                priority: 1
+            });
+            // VidSrc.xyz
+            sources.push({ 
+                name: 'VidSrc.xyz', 
+                url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}`,
+                type: 'iframe',
+                priority: 2
+            });
+            // Embed.su - Good quality
+            sources.push({ 
+                name: 'Embed.su', 
+                url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`,
+                type: 'iframe',
+                priority: 3
+            });
+            // AutoEmbed.co
+            sources.push({ 
+                name: 'AutoEmbed', 
+                url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`,
+                type: 'iframe',
+                priority: 4
+            });
+            // 2Embed.to
+            sources.push({ 
+                name: '2Embed', 
+                url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}`,
+                type: 'iframe',
+                priority: 5
+            });
+            // MultiEmbed.mov - Can provide direct links
+            sources.push({ 
+                name: 'MultiEmbed', 
+                url: `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`,
+                type: 'mixed',
+                priority: 6
+            });
+            // SmashyStream
+            sources.push({ 
+                name: 'SmashyStream', 
+                url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}`,
+                type: 'iframe',
+                priority: 7
+            });
+            // SuperEmbed
+            sources.push({ 
+                name: 'SuperEmbed', 
+                url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}`,
+                type: 'iframe',
+                priority: 8
+            });
+            // MoviesAPI
+            sources.push({ 
+                name: 'MoviesAPI', 
+                url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}`,
+                type: 'iframe',
+                priority: 9
+            });
         } else {
-            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/movie/${tmdbId}` });
-            sources.push({ name: 'VidSrc.cc', url: `https://vidsrc.cc/embed/movie/${tmdbId}` });
-            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/movie/${tmdbId}` });
-            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/movie/tmdb/${tmdbId}` });
-            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/movie/${tmdbId}` });
-            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}` });
-            sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1` });
-            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/movie/${tmdbId}` });
-            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/movie/${tmdbId}` });
+            // Movie sources
+            sources.push({ 
+                name: 'VidSrc.to', 
+                url: `https://vidsrc.to/embed/movie/${tmdbId}`,
+                type: 'iframe',
+                priority: 1
+            });
+            sources.push({ 
+                name: 'VidSrc.xyz', 
+                url: `https://vidsrc.xyz/embed/movie/${tmdbId}`,
+                type: 'iframe',
+                priority: 2
+            });
+            sources.push({ 
+                name: 'Embed.su', 
+                url: `https://embed.su/embed/movie/${tmdbId}`,
+                type: 'iframe',
+                priority: 3
+            });
+            sources.push({ 
+                name: 'AutoEmbed', 
+                url: `https://autoembed.co/movie/tmdb/${tmdbId}`,
+                type: 'iframe',
+                priority: 4
+            });
+            sources.push({ 
+                name: '2Embed', 
+                url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}`,
+                type: 'iframe',
+                priority: 5
+            });
+            sources.push({ 
+                name: 'MultiEmbed', 
+                url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
+                type: 'mixed',
+                priority: 6
+            });
+            sources.push({ 
+                name: 'SmashyStream', 
+                url: `https://embed.smashy.stream/movie/${tmdbId}`,
+                type: 'iframe',
+                priority: 7
+            });
+            sources.push({ 
+                name: 'SuperEmbed', 
+                url: `https://superembed.stream/movie/${tmdbId}`,
+                type: 'iframe',
+                priority: 8
+            });
+            sources.push({ 
+                name: 'MoviesAPI', 
+                url: `https://moviesapi.club/movie/${tmdbId}`,
+                type: 'iframe',
+                priority: 9
+            });
         }
+
+        // Sort by priority
+        sources.sort((a, b) => a.priority - b.priority);
         return sources;
     }
 
-    // --- 2. LAMPA UI COMPONENT ---
+    // --- 2. SOURCE TESTING FUNCTION ---
+    async function testSource(source) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+
+        try {
+            // Try to fetch the source URL
+            const response = await fetch(source.url, {
+                method: 'HEAD',
+                mode: 'no-cors',
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+
+            // With no-cors, we can't read status, but if it doesn't throw, it's reachable
+            return {
+                working: true,
+                latency: 'unknown'
+            };
+        } catch (error) {
+            clearTimeout(timeout);
+            return {
+                working: false,
+                error: error.message
+            };
+        }
+    }
+
+    // --- 3. LAMPA UI COMPONENT ---
     function MultiEmbedComponent(object) {
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
         var html = $('<div></div>');
+        var selectedIndex = 0;
+        var items = [];
 
         this.create = function () {
             scroll.minus();
             files.appendFiles(scroll.render());
-            files.appendHead($('<div class="simple-text" style="padding: 1em; text-align: center; font-size: 1.2em;">Select an Embed Source</div>'));
+            files.appendHead($('<div class="simple-text" style="padding: 1em; text-align: center; font-size: 1.2em;">Select an Embed Source (Press OK to test)</div>'));
             return this.render();
         };
 
@@ -54,50 +188,126 @@
         this.start = function () {
             if (Lampa.Activity.active().activity !== this.activity) return;
             Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
+            
             Lampa.Controller.add('content', {
                 toggle: function () {
                     Lampa.Controller.collectionSet(scroll.render(), files.render());
                     Lampa.Controller.collectionFocus(false, scroll.render());
                 },
-                up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
-                down: function () { Navigator.move('down'); },
+                up: function () {
+                    if (selectedIndex > 0) {
+                        selectedIndex--;
+                        updateFocus();
+                        scroll.scrollToIndex(selectedIndex);
+                    } else {
+                        Lampa.Controller.toggle('head');
+                    }
+                },
+                down: function () {
+                    if (selectedIndex < items.length - 1) {
+                        selectedIndex++;
+                        updateFocus();
+                        scroll.scrollToIndex(selectedIndex);
+                    }
+                },
                 left: function () { Lampa.Controller.toggle('menu'); },
-                right: function () { Navigator.move('right'); },
+                right: function () { 
+                    // Test current source
+                    if (items[selectedIndex]) {
+                        testAndPlay(items[selectedIndex]);
+                    }
+                },
+                ok: function () {
+                    // Test source on OK press
+                    if (items[selectedIndex]) {
+                        testAndPlay(items[selectedIndex]);
+                    }
+                },
                 back: this.back
             });
             Lampa.Controller.toggle('content');
             this.buildList();
         };
 
+        function updateFocus() {
+            items.forEach((item, idx) => {
+                if (idx === selectedIndex) {
+                    item.addClass('focus');
+                } else {
+                    item.removeClass('focus');
+                }
+            });
+        }
+
+        async function testAndPlay(sourceData) {
+            Lampa.Notifier.show({ title: 'Testing Source', text: 'Checking availability...' });
+            
+            const result = await testSource(sourceData);
+            
+            if (result.working) {
+                Lampa.Notifier.show({ 
+                    title: 'Source Working', 
+                    text: sourceData.name + ' is available',
+                    time: 2000
+                });
+                
+                // Play the source
+                Lampa.Player.play({
+                    url: sourceData.url,
+                    title: object.movie.title || object.movie.name,
+                    iframe: true
+                });
+            } else {
+                Lampa.Notifier.show({ 
+                    title: 'Source Failed', 
+                    text: sourceData.name + ' is not accessible',
+                    time: 3000
+                });
+            }
+        }
+
         this.back = function () { Lampa.Activity.backward(); };
-        this.destroy = function () { scroll.destroy(); files.destroy(); html.remove(); };
+        this.destroy = function () { 
+            scroll.destroy(); 
+            files.destroy(); 
+            html.remove();
+            items = [];
+        };
 
         this.buildList = function () {
             html.empty();
+            items = [];
             var sources = getSources(object.movie);
-            
-            sources.forEach(function (source) {
-                // Removed Lampa.Utils.escape to prevent crashes
+            selectedIndex = 0;
+
+            sources.forEach(function (source, index) {
                 var item = $(
-                    '<div class="online selector" style="padding: 1em; margin-bottom: 0.5em; background: rgba(255,255,255,0.05); border-radius: 0.3em;">' +
+                    '<div class="online selector" style="padding: 1em; margin-bottom: 0.5em; background: rgba(255,255,255,0.05); border-radius: 0.3em; transition: all 0.2s;">' +
                     '<div class="online__title" style="font-size: 1.2em; font-weight: bold;">' + source.name + '</div>' +
-                    '<div class="online__quality" style="opacity: 0.7;">Iframe Player (Subtitles/Audio selectable inside player)</div>' +
+                    '<div class="online__quality" style="opacity: 0.7;">' + 
+                    (source.type === 'mixed' ? 'May provide direct HLS/m3u8' : 'Iframe Player') +
+                    ' | Press OK/Right to test' +
+                    '</div>' +
                     '</div>'
                 );
 
                 item.on('hover:enter', function () {
-                    // Play via Lampa's native Iframe player
-                    Lampa.Player.play({
-                        url: source.url,
-                        title: object.movie.title || object.movie.name,
-                        iframe: true
-                    });
+                    selectedIndex = index;
+                    updateFocus();
+                    testAndPlay(source);
                 });
 
                 html.append(item);
+                items.push(item);
             });
 
             scroll.append(html);
+            
+            // Set initial focus
+            if (items.length > 0) {
+                items[0].addClass('focus');
+            }
+            
             Lampa.Controller.enable('content');
         };
     }
@@ -117,13 +327,13 @@
         });
     }
 
-    // --- 3. UI INTEGRATION ---
+    // --- 4. UI INTEGRATION ---
     // Inject button directly onto the Movie/TV Show details page
     Lampa.Listener.follow('full', function(e) {
         if (e.type !== 'complite') return;
         var render = e.object.activity.render();
         var movie = e.data.movie;
-        
+
         if (render.find('.multi-embed-btn').length) return;
 
         var btn = $(
