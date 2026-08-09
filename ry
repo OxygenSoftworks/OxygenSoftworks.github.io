@@ -1,1 +1,221 @@
-ry
+(function() {
+    'use strict';
+
+    if (window.SootioLampaPlugin) return;
+    window.SootioLampaPlugin = true;
+
+    // 1. Sootio Public Backend Configuration (Enables ALL HTTP Providers for free)
+    const sootioConfig = {
+        DebridServices: [{
+            provider: "httpstreaming",
+            http4khdhub: true, httpHDHub4u: true, httpUHDMovies: true,
+            httpMoviesDrive: true, httpMKVCinemas: true, httpMalluMv: true,
+            httpCineDoze: true, httpVixSrc: true, httpMoviesMod: true,
+            httpMoviesLeech: true, httpAnimeFlix: true, http111477: true,
+            httpXDMovies: true, httpPixeldrain: true, httpMkvBase: true,
+            httpVadapav: true, enableProxy: false, proxyUrl: "", proxyPassword: ""
+        }],
+        Languages: [], 
+        Resolutions: [],
+        Scrapers: [],
+        IndexerScrapers: [],
+        ScrapersConfigured: true,
+        minSize: 0,
+        maxSize: 200,
+        ShowCatalog: false,
+        ProxyApplyAll: false
+    };
+
+    // Encode the config to query the public Stremio-compatible endpoint
+    const CONFIG_STRING = encodeURIComponent(JSON.stringify(sootioConfig));
+    const BASE_URL = `https://sooti.info/${CONFIG_STRING}`;
+
+    // --- SMART SELECTION HELPERS ---
+    function getResolutionRank(resolution) {
+        if (!resolution) return 0;
+        const r = resolution.toLowerCase();
+        if (r.includes('2160') || r.includes('4k') || r.includes('uhd')) return 4;
+        if (r.includes('1440') || r.includes('2k')) return 3;
+        if (r.includes('1080')) return 2;
+        if (r.includes('720')) return 1;
+        return 0;
+    }
+
+    function parseSizeMB(sizeStr) {
+        if (!sizeStr) return 0;
+        const match = sizeStr.toString().match(/([\d.]+)\s*(GB|MB|TB|KB)/i);
+        if (!match) return 0;
+        let val = parseFloat(match[1]);
+        const unit = match[2].toUpperCase();
+        if (unit === 'TB') val *= 1024 * 1024;
+        else if (unit === 'GB') val *= 1024;
+        else if (unit === 'KB') val /= 1024;
+        return val;
+    }
+
+    function isStrictlyEnglish(title, behaviorHints) {
+        const fileName = (behaviorHints && behaviorHints.fileName) || '';
+        const text = (title + ' ' + fileName).toLowerCase();
+        
+        // Reject non-english and dual/multi audio tracks
+        const rejectKeywords = [
+            'hindi', 'russian', 'spanish', 'french', 'german', 'italian', 
+            'portuguese', 'korean', 'japanese', 'chinese', 'arabic', 'turkish', 
+            'dual audio', 'multi-audio', 'dual-audio', 'hindi dub', 'rus', 
+            'latino', 'tamil', 'telugu', 'polish', 'ukrainian', 'czech', 
+            'hungarian', 'romanian', 'multi'
+        ];
+        for (const kw of rejectKeywords) {
+            if (text.includes(kw)) return false;
+        }
+        return true;
+    }
+
+    function selectBestStream(streams) {
+        if (!streams || streams.length === 0) return null;
+
+        // Filter strictly English streams
+        let englishStreams = streams.filter(s => isStrictlyEnglish(s.title, s.behaviorHints));
+        
+        // Fallback: If no strictly English streams, allow everything except hard dual-audio tags
+        if (englishStreams.length === 0) {
+            englishStreams = streams.filter(s => {
+                const text = (s.title + ' ' + ((s.behaviorHints && s.behaviorHints.fileName) || '')).toLowerCase();
+                return !text.includes('dual audio') && !text.includes('dual-audio') && !text.includes('multi-audio');
+            });
+        }
+        if (englishStreams.length === 0) englishStreams = streams;
+
+        // Sort: Highest Quality -> Smallest File Size (Fastest Speed)
+        englishStreams.sort((a, b) => {
+            const rankA = getResolutionRank(a.resolution);
+            const rankB = getResolutionRank(b.resolution);
+            if (rankA !== rankB) return rankB - rankA; 
+
+            const sizeA = parseSizeMB(a.size);
+            const sizeB = parseSizeMB(b.size);
+            if (sizeA > 0 && sizeB > 0 && sizeA !== sizeB) return sizeA - sizeB; 
+            return 0;
+        });
+
+        return englishStreams[0];
+    }
+
+    // --- FETCH IMDB ID (Lampa uses TMDB by default, Sootio requires IMDB) ---
+    function getImdbId(movie, callback) {
+        if (movie.imdb_id) return callback(movie.imdb_id);
+        
+        const type = movie.name ? 'tv' : 'movie';
+        const url = `https://api.themoviedb.org/3/${type}/${movie.id}?api_key=${Lampa.TMDB.api_key}&append_to_response=external_ids`;
+        
+        const network = new Lampa.Reguest();
+        network.timeout(10000);
+        network.native(url, function(res) {
+            try {
+                const data = typeof res === 'string' ? JSON.parse(res) : res;
+                if (data && data.external_ids && data.external_ids.imdb_id) {
+                    callback(data.external_ids.imdb_id);
+                } else {
+                    callback(null);
+                }
+            } catch(e) { callback(null); }
+        }, function() { callback(null); });
+    }
+
+    // --- CORE FETCH AND PLAY LOGIC ---
+    function playSootioAuto(movie, season, episode) {
+        getImdbId(movie, function(imdbId) {
+            if (!imdbId) return Lampa.Noty.show('❌ No IMDB ID found for this title.');
+
+            const isSeries = !!season && !!episode;
+            const type = isSeries ? 'series' : 'movie';
+            
+            let queryUrl = `${BASE_URL}/stream/${type}/${imdbId}.json`;
+            if (isSeries) {
+                queryUrl = `${BASE_URL}/stream/series/${imdbId}:${season}:${episode}.json`;
+            }
+
+            Lampa.Noty.show('🔍 Searching Sootio providers for best English stream...');
+
+            const network = new Lampa.Reguest();
+            network.timeout(30000);
+            network.native(queryUrl, function(resp) {
+                try {
+                    const data = typeof resp === 'string' ? JSON.parse(resp) : resp;
+                    if (data && data.streams && data.streams.length > 0) {
+                        // Filter out Sootio's donation banners
+                        const validStreams = data.streams.filter(s => !((s.title || '').includes('SUPPORT SOOTIO') || s.externalUrl));
+                        const best = selectBestStream(validStreams);
+                        
+                        if (best && best.url) {
+                            const titleShort = (best.title || 'Auto').split('\n')[0].substring(0, 60) + '...';
+                            Lampa.Noty.show('▶️ Playing: ' + titleShort);
+                            
+                            const entry = {
+                                url: best.url,
+                                title: movie.title || movie.name,
+                                subtitles: best.subtitles || []
+                            };
+                            Lampa.Player.play(entry);
+                            Lampa.Player.playlist([entry]);
+                        } else {
+                            Lampa.Noty.show('⚠️ No strictly English streams found.');
+                        }
+                    } else {
+                        Lampa.Noty.show('❌ No streams found from Sootio.');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    Lampa.Noty.show('❌ Error parsing Sootio response.');
+                }
+            }, function(err) {
+                Lampa.Noty.show('❌ Failed to fetch Sootio streams.');
+            }, null, {
+                dataType: 'text', 
+                headers: { 'Accept': 'application/json' }
+            });
+        });
+    }
+
+    // --- LAMPA UI INTEGRATION ---
+
+    // 1. Register as an "Online" source (Shows up when you click the "Online" tab for TV Shows/Movies)
+    if (Lampa.Online && Lampa.Online.register) {
+        Lampa.Online.register('sootio_auto', {
+            title: '⚡ Sootio Auto',
+            search: function(movie, oncomplite) {
+                const season = movie.season_number || movie.season;
+                const episode = movie.episode_number || movie.episode;
+                playSootioAuto(movie, season, episode);
+                if (oncomplite) oncomplite([]);
+            },
+            onContextMenu: function() { return { name: '⚡ Sootio Auto' }; }
+        });
+    }
+
+    // 2. Inject a Quick-Play Button on the Movie/Show Details Page
+    Lampa.Listener.follow('full', function(e) {
+        if (e.type !== 'complite') return;
+        
+        const render = e.object.activity.render();
+        const movie = e.data.movie;
+        
+        if (render.find('.sootio-auto-btn').length) return;
+
+        const btn = $(`
+            <div class="full-start__button selector sootio-auto-btn" data-subtitle="Sootio Auto-Play">
+                ⚡ Sootio Auto
+            </div>
+        `);
+
+        btn.on('hover:enter', function() {
+            playSootioAuto(movie); 
+        });
+
+        const playBtn = render.find('.button--play');
+        if (playBtn.length) playBtn.before(btn);
+        else render.find('.full-start__buttons').append(btn);
+    });
+
+    console.log('[Sootio Auto] Plugin initialized.');
+})();
