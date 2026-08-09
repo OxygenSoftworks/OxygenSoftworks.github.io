@@ -53,52 +53,57 @@
         return val;
     }
 
-    function isStrictlyEnglish(title, behaviorHints) {
-        const fileName = (behaviorHints && behaviorHints.fileName) || '';
-        const text = (title + ' ' + fileName).toLowerCase();
+    // Prioritize English Dubs/Subs without strictly filtering others out
+    function getEnglishRank(title, behaviorHints) {
+        const text = (title + ' ' + JSON.stringify(behaviorHints || {})).toLowerCase();
+        let rank = 0;
         
-        // Reject non-english and dual/multi audio tracks
-        const rejectKeywords = [
-            'hindi', 'russian', 'spanish', 'french', 'german', 'italian', 
-            'portuguese', 'korean', 'japanese', 'chinese', 'arabic', 'turkish', 
-            'dual audio', 'multi-audio', 'dual-audio', 'hindi dub', 'rus', 
-            'latino', 'tamil', 'telugu', 'polish', 'ukrainian', 'czech', 
-            'hungarian', 'romanian', 'multi'
-        ];
-        for (const kw of rejectKeywords) {
-            if (text.includes(kw)) return false;
+        // High priority for English tags
+        if (text.includes('english') || text.includes('eng') || text.includes('🇬🇧') || text.includes('🇺🇸')) {
+            rank += 100;
         }
-        return true;
+        // Bonus for "Dub" or "Sub" in English
+        if (text.includes('dub') || text.includes('dubbed')) rank += 20;
+        if (text.includes('sub') || text.includes('subbed')) rank += 10;
+
+        // Penalty for non-English languages
+        const nonEnglish = ['hindi', 'russian', 'spanish', 'french', 'german', 'italian', 'portuguese', 'korean', 'japanese', 'chinese', 'arabic', 'turkish', 'hindi dub', 'latino', 'tamil', 'telugu', 'polish', 'ukrainian', 'czech', 'hungarian', 'romanian'];
+        for (const lang of nonEnglish) {
+            if (text.includes(lang)) rank -= 100;
+        }
+        
+        // Penalty for Dual/Multi audio (often annoying)
+        if (text.includes('dual audio') || text.includes('multi-audio') || text.includes('dual-audio') || text.includes('multi')) {
+            rank -= 50;
+        }
+        
+        return rank;
     }
 
     function selectBestStream(streams) {
         if (!streams || streams.length === 0) return null;
 
-        // Filter strictly English streams
-        let englishStreams = streams.filter(s => isStrictlyEnglish(s.title, s.behaviorHints));
-        
-        // Fallback: If no strictly English streams, allow everything except hard dual-audio tags
-        if (englishStreams.length === 0) {
-            englishStreams = streams.filter(s => {
-                const text = (s.title + ' ' + ((s.behaviorHints && s.behaviorHints.fileName) || '')).toLowerCase();
-                return !text.includes('dual audio') && !text.includes('dual-audio') && !text.includes('multi-audio');
-            });
-        }
-        if (englishStreams.length === 0) englishStreams = streams;
+        // Sort: English Dubs/Subs -> Highest Quality -> Smallest File Size (Fastest Speed)
+        streams.sort((a, b) => {
+            // 1. Prioritize English Dubs/Subs
+            const langRankA = getEnglishRank(a.title, a.behaviorHints);
+            const langRankB = getEnglishRank(b.title, b.behaviorHints);
+            if (langRankA !== langRankB) return langRankB - langRankA;
 
-        // Sort: Highest Quality -> Smallest File Size (Fastest Speed)
-        englishStreams.sort((a, b) => {
-            const rankA = getResolutionRank(a.resolution);
-            const rankB = getResolutionRank(b.resolution);
+            // 2. Quality (4K > 1080p)
+            const rankA = getResolutionRank(a.resolution || a.title);
+            const rankB = getResolutionRank(b.resolution || b.title);
             if (rankA !== rankB) return rankB - rankA; 
 
-            const sizeA = parseSizeMB(a.size);
-            const sizeB = parseSizeMB(b.size);
+            // 3. Speed/Size (Smallest first for fast buffering)
+            const sizeA = parseSizeMB(a.size || a.title);
+            const sizeB = parseSizeMB(b.size || b.title);
             if (sizeA > 0 && sizeB > 0 && sizeA !== sizeB) return sizeA - sizeB; 
+            
             return 0;
         });
 
-        return englishStreams[0];
+        return streams[0];
     }
 
     // --- FETCH IMDB ID (Lampa uses TMDB by default, Sootio requires IMDB) ---
@@ -135,7 +140,7 @@
                 queryUrl = `${BASE_URL}/stream/series/${imdbId}:${season}:${episode}.json`;
             }
 
-            Lampa.Noty.show('🔍 Searching Sootio providers for best English stream...');
+            Lampa.Noty.show('🔍 Searching Sootio providers for best stream...');
 
             const network = new Lampa.Reguest();
             network.timeout(30000);
@@ -151,15 +156,21 @@
                             const titleShort = (best.title || 'Auto').split('\n')[0].substring(0, 60) + '...';
                             Lampa.Noty.show('▶️ Playing: ' + titleShort);
                             
+                            // Map Stremio subtitles to Lampa format
+                            const subs = (best.subtitles || []).map(sub => ({
+                                label: sub.lang || sub.title || 'Subtitles',
+                                url: sub.url
+                            }));
+
                             const entry = {
                                 url: best.url,
                                 title: movie.title || movie.name,
-                                subtitles: best.subtitles || []
+                                subtitles: subs
                             };
                             Lampa.Player.play(entry);
                             Lampa.Player.playlist([entry]);
                         } else {
-                            Lampa.Noty.show('⚠️ No strictly English streams found.');
+                            Lampa.Noty.show('⚠️ No streams found.');
                         }
                     } else {
                         Lampa.Noty.show('❌ No streams found from Sootio.');
