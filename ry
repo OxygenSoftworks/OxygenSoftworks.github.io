@@ -3,312 +3,174 @@
     if (window.MultiEmbedPlugin) return;
     window.MultiEmbedPlugin = true;
 
-    // --- 1. RELIABLE IFRAME SOURCES WITH DIRECT STREAM SUPPORT ---
+    // --- CORS PROXY FOR IFRAME FETCHING ---
+    const CORS_PROXIES = [
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?',
+        'https://thingproxy.freeboard.io/fetch/'
+    ];
+
+    async function fetchWithProxy(url) {
+        for (const proxy of CORS_PROXIES) {
+            try {
+                const response = await fetch(proxy + encodeURIComponent(url), {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'text/html,application/xhtml+xml',
+                        'User-Agent': 'Mozilla/5.0'
+                    }
+                });
+                if (response.ok) return await response.text();
+            } catch (e) {
+                continue;
+            }
+        }
+        throw new Error('All proxies failed');
+    }
+
+    // --- 1. SOURCES CONFIGURATION ---
     function getSources(movie) {
         const tmdbId = movie.id;
         const isSeries = !!(movie.name && movie.first_air_date);
         const season = movie.season_number || movie.season || 1;
         const episode = movie.episode_number || movie.episode || 1;
-
         const sources = [];
 
-        // Primary sources - tried first
         if (isSeries) {
-            // VidSrc.to - Often provides direct HLS
-            sources.push({ 
-                name: 'VidSrc.to', 
-                url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`,
-                type: 'iframe',
-                priority: 1
-            });
-            // VidSrc.xyz
-            sources.push({ 
-                name: 'VidSrc.xyz', 
-                url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}`,
-                type: 'iframe',
-                priority: 2
-            });
-            // Embed.su - Good quality
-            sources.push({ 
-                name: 'Embed.su', 
-                url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`,
-                type: 'iframe',
-                priority: 3
-            });
-            // AutoEmbed.co
-            sources.push({ 
-                name: 'AutoEmbed', 
-                url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`,
-                type: 'iframe',
-                priority: 4
-            });
-            // 2Embed.to
-            sources.push({ 
-                name: '2Embed', 
-                url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}`,
-                type: 'iframe',
-                priority: 5
-            });
-            // MultiEmbed.mov - Can provide direct links
-            sources.push({ 
-                name: 'MultiEmbed', 
-                url: `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`,
-                type: 'mixed',
-                priority: 6
-            });
-            // SmashyStream
-            sources.push({ 
-                name: 'SmashyStream', 
-                url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}`,
-                type: 'iframe',
-                priority: 7
-            });
-            // SuperEmbed
-            sources.push({ 
-                name: 'SuperEmbed', 
-                url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}`,
-                type: 'iframe',
-                priority: 8
-            });
-            // MoviesAPI
-            sources.push({ 
-                name: 'MoviesAPI', 
-                url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}`,
-                type: 'iframe',
-                priority: 9
-            });
+            sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`, type: 'mixed', priority: 1 });
+            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 2 });
+            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 3 });
+            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 4 });
+            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`, type: 'iframe', priority: 5 });
+            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}`, type: 'iframe', priority: 6 });
+            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 7 });
+            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 8 });
+            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}`, type: 'iframe', priority: 9 });
         } else {
-            // Movie sources
-            sources.push({ 
-                name: 'VidSrc.to', 
-                url: `https://vidsrc.to/embed/movie/${tmdbId}`,
-                type: 'iframe',
-                priority: 1
-            });
-            sources.push({ 
-                name: 'VidSrc.xyz', 
-                url: `https://vidsrc.xyz/embed/movie/${tmdbId}`,
-                type: 'iframe',
-                priority: 2
-            });
-            sources.push({ 
-                name: 'Embed.su', 
-                url: `https://embed.su/embed/movie/${tmdbId}`,
-                type: 'iframe',
-                priority: 3
-            });
-            sources.push({ 
-                name: 'AutoEmbed', 
-                url: `https://autoembed.co/movie/tmdb/${tmdbId}`,
-                type: 'iframe',
-                priority: 4
-            });
-            sources.push({ 
-                name: '2Embed', 
-                url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}`,
-                type: 'iframe',
-                priority: 5
-            });
-            sources.push({ 
-                name: 'MultiEmbed', 
-                url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
-                type: 'mixed',
-                priority: 6
-            });
-            sources.push({ 
-                name: 'SmashyStream', 
-                url: `https://embed.smashy.stream/movie/${tmdbId}`,
-                type: 'iframe',
-                priority: 7
-            });
-            sources.push({ 
-                name: 'SuperEmbed', 
-                url: `https://superembed.stream/movie/${tmdbId}`,
-                type: 'iframe',
-                priority: 8
-            });
-            sources.push({ 
-                name: 'MoviesAPI', 
-                url: `https://moviesapi.club/movie/${tmdbId}`,
-                type: 'iframe',
-                priority: 9
-            });
+            sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`, type: 'mixed', priority: 1 });
+            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/movie/${tmdbId}`, type: 'iframe', priority: 2 });
+            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/movie/${tmdbId}`, type: 'iframe', priority: 3 });
+            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/movie/${tmdbId}`, type: 'iframe', priority: 4 });
+            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/movie/tmdb/${tmdbId}`, type: 'iframe', priority: 5 });
+            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}`, type: 'iframe', priority: 6 });
+            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/movie/${tmdbId}`, type: 'iframe', priority: 7 });
+            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/movie/${tmdbId}`, type: 'iframe', priority: 8 });
+            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/movie/${tmdbId}`, type: 'iframe', priority: 9 });
         }
 
-        // Sort by priority
         sources.sort((a, b) => a.priority - b.priority);
         return sources;
     }
 
     // --- 2. M3U8/TS STREAM EXTRACTION FROM IFRAME ---
-    // Extracts direct video streams (m3u8, mp4, ts) from iframe sources
     async function extractStreamFromIframe(iframeUrl) {
         try {
-            // Try to fetch the iframe page and extract stream URLs
-            const response = await fetch(iframeUrl, {
-                method: 'GET',
-                mode: 'cors',
-                headers: {
-                    'Accept': 'text/html,application/xhtml+xml'
-                }
-            });
-
-            if (!response.ok) throw new Error('Failed to fetch iframe');
-
-            const html = await response.text();
+            let html;
+            try {
+                html = await fetchWithProxy(iframeUrl);
+            } catch (e) {
+                console.log('[Multi-Embed] Fetch failed');
+                return null;
+            }
 
             // Pattern 1: Direct m3u8 URLs
-            const m3u8Pattern = /https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/gi;
-            const m3u8Matches = html.match(m3u8Pattern);
+            const m3u8Matches = html.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/gi);
             if (m3u8Matches && m3u8Matches.length > 0) {
                 console.log('[Multi-Embed] Found m3u8:', m3u8Matches[0]);
                 return { type: 'hls', url: m3u8Matches[0] };
             }
 
             // Pattern 2: Direct mp4 URLs
-            const mp4Pattern = /https?:\/\/[^"'\s]+\.mp4[^"'\s]*/gi;
-            const mp4Matches = html.match(mp4Pattern);
+            const mp4Matches = html.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/gi);
             if (mp4Matches && mp4Matches.length > 0) {
                 console.log('[Multi-Embed] Found mp4:', mp4Matches[0]);
                 return { type: 'mp4', url: mp4Matches[0] };
             }
 
-            // Pattern 3: TS segment files (usually in playlists)
-            const tsPattern = /https?:\/\/[^"'\s]+\.ts[^"'\s]*/gi;
-            const tsMatches = html.match(tsPattern);
-            if (tsMatches && tsMatches.length > 0) {
-                // Find the master playlist that references these TS files
-                console.log('[Multi-Embed] Found TS segments, looking for playlist...');
-                const playlistPattern = /https?:\/\/[^"'\s]*master[^"'\s]*\.m3u8[^"'\s]*/gi;
-                const playlistMatch = html.match(playlistPattern);
-                if (playlistMatch && playlistMatch.length > 0) {
-                    console.log('[Multi-Embed] Found master playlist:', playlistMatch[0]);
-                    return { type: 'hls', url: playlistMatch[0] };
+            // Pattern 3: Video element src
+            const videoMatch = html.match(/<video[^>]*src=["']([^"']+)["'][^>]*>/i);
+            if (videoMatch && videoMatch[1]) {
+                const ext = videoMatch[1].split('.').pop().toLowerCase();
+                if (ext === 'm3u8' || ext === 'mp4') {
+                    return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: videoMatch[1] };
                 }
             }
 
-            // Pattern 4: Check for video element with src
-            const videoSrcPattern = /<video[^>]*src=["']([^"']+)["'][^>]*>/i;
-            const videoMatch = html.match(videoSrcPattern);
-            if (videoMatch && videoMatch[1]) {
-                console.log('[Multi-Embed] Found video src:', videoMatch[1]);
-                const ext = videoMatch[1].split('.').pop().toLowerCase();
-                if (ext === 'm3u8') return { type: 'hls', url: videoMatch[1] };
-                if (ext === 'mp4') return { type: 'mp4', url: videoMatch[1] };
-            }
-
-            // Pattern 5: Check for source elements
-            const sourcePattern = /<source[^>]*src=["']([^"']+)["'][^>]*>/gi;
+            // Pattern 4: Source elements
+            const sourcePattern = /<source[^>]*src=["']([^"']+)[\"'][^>]*>/gi;
             let sourceMatch;
             while ((sourceMatch = sourcePattern.exec(html)) !== null) {
-                console.log('[Multi-Embed] Found source:', sourceMatch[1]);
                 const ext = sourceMatch[1].split('.').pop().toLowerCase();
                 if (ext === 'm3u8' || ext === 'mp4') {
                     return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: sourceMatch[1] };
                 }
             }
 
-            // Pattern 6: Check for common player configurations (JSON in script tags)
-            const configPatterns = [
-                /file["']\s*:\s*["']([^"']+)["']/i,
-                /url["']\s*:\s*["']([^"']+)["']/i,
-                /src["']\s*:\s*["']([^"']+)["']/i
-            ];
-
+            // Pattern 5: Player config JSON
+            const configPatterns = [/file["']\s*:\s*["']([^"']+)["']/i, /url["']\s*:\s*["']([^"']+)["']/i, /src["']\s*:\s*["']([^"']+)["']/i];
             for (const pattern of configPatterns) {
                 const configMatch = html.match(pattern);
                 if (configMatch && configMatch[1]) {
                     const streamUrl = configMatch[1].replace(/\\/g, '');
                     const ext = streamUrl.split('.').pop().toLowerCase();
                     if (ext === 'm3u8' || ext === 'mp4') {
-                        console.log('[Multi-Embed] Found config URL:', streamUrl);
                         return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: streamUrl };
                     }
                 }
             }
 
-            console.log('[Multi-Embed] No direct stream found in iframe');
             return null;
-
         } catch (error) {
-            console.error('[Multi-Embed] Error extracting stream:', error.message);
+            console.error('[Multi-Embed] Error:', error.message);
             return null;
         }
     }
 
-    // --- 3. ALTERNATIVE: USE MULTIEMBED API FOR DIRECT LINKS ---
+    // --- 3. MULTIEMBED API DIRECT LINKS ---
     async function getDirectStreamFromMultiEmbed(tmdbId, isSeries, season, episode) {
         try {
-            let apiUrl;
-            if (isSeries) {
-                apiUrl = `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`;
-            } else {
-                apiUrl = `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1`;
-            }
+            const apiUrl = isSeries 
+                ? `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`
+                : `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`;
 
-            const response = await fetch(apiUrl, {
-                method: 'GET',
-                mode: 'cors',
-                redirect: 'follow'
-            });
+            const response = await fetch(apiUrl, { method: 'GET', mode: 'cors', redirect: 'follow' });
+            if (!response.ok) throw new Error('Failed');
 
-            if (!response.ok) throw new Error('Failed to fetch from MultiEmbed');
-
-            // Check if response is JSON
             const contentType = response.headers.get('content-type');
             if (contentType && contentType.includes('application/json')) {
                 const data = await response.json();
                 if (data.url) {
                     const ext = data.url.split('.').pop().toLowerCase();
                     if (ext === 'm3u8' || ext === 'mp4') {
-                        console.log('[Multi-Embed] Got direct link from API:', data.url);
                         return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: data.url };
                     }
                 }
             }
 
-            // If redirect, check final URL
             const finalUrl = response.url;
             if (finalUrl !== apiUrl) {
                 const ext = finalUrl.split('.').pop().toLowerCase();
                 if (ext === 'm3u8' || ext === 'mp4') {
-                    console.log('[Multi-Embed] Redirected to direct link:', finalUrl);
                     return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: finalUrl };
                 }
             }
-
             return null;
         } catch (error) {
-            console.error('[Multi-Embed] Error getting direct stream:', error.message);
             return null;
         }
     }
 
-    // --- 4. SOURCE TESTING FUNCTION ---
+    // --- 4. SOURCE TESTING ---
     async function testSource(source) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
-
         try {
-            // Try to fetch the source URL
-            const response = await fetch(source.url, {
-                method: 'HEAD',
-                mode: 'no-cors',
-                signal: controller.signal
-            });
+            await fetch(source.url, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
             clearTimeout(timeout);
-
-            // With no-cors, we can't read status, but if it doesn't throw, it's reachable
-            return {
-                working: true,
-                latency: 'unknown'
-            };
+            return { working: true };
         } catch (error) {
             clearTimeout(timeout);
-            return {
-                working: false,
-                error: error.message
-            };
+            return { working: false, error: error.message };
         }
     }
 
@@ -320,91 +182,61 @@
         var selectedIndex = 0;
         var items = [];
 
-        this.create = function () {
+        this.create = function() {
             scroll.minus();
             files.appendFiles(scroll.render());
-            files.appendHead($('<div class="simple-text" style="padding: 1em; text-align: center; font-size: 1.2em;">Select an Embed Source (Press OK to test)</div>'));
+            files.appendHead($('<div class="simple-text" style="padding:1em;text-align:center;font-size:1.2em;">Select Source (Press OK)</div>'));
             return this.render();
         };
+        this.render = function() { return files.render(); };
 
-        this.render = function () { return files.render(); };
-
-        // Helper function to scroll to a specific item index
         function scrollToItem(index) {
-            if (!items[index]) return;
-            
-            var item = items[index][0]; // Get DOM element from jQuery
-            var scrollBody = scroll.body(true); // Get DOM element
-            var scrollHtml = scroll.render(true); // Get main HTML element
-            
-            if (item && scrollBody) {
-                var itemTop = item.offsetTop;
-                var itemHeight = item.offsetHeight;
-                var scrollHeight = scrollHtml.clientHeight;
-                var currentScroll = -scroll.position();
-                
-                // Calculate target scroll position to center the item
-                var targetScroll = itemTop - (scrollHeight / 2) + (itemHeight / 2);
-                
-                // Ensure we don't scroll past boundaries
-                var maxScroll = scrollBody.scrollHeight - scrollHeight;
-                targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
-                
-                // Animate scroll using wheel method
-                var step = (targetScroll - currentScroll) / 20;
-                var steps = 20;
-                var currentStep = 0;
-                
-                var scrollInterval = setInterval(function() {
-                    currentStep++;
-                    if (currentStep >= steps) {
-                        clearInterval(scrollInterval);
-                        scroll.wheel(targetScroll - currentScroll);
-                    } else {
-                        scroll.wheel(step);
-                    }
-                }, 16); // ~60fps
+            if (!items[index] || items.length === 0) return;
+            var itemEl = items[index][0];
+            var container = scroll.render()[0];
+            if (!itemEl || !container) return;
+
+            var itemTop = itemEl.offsetTop;
+            var itemHeight = itemEl.offsetHeight;
+            var containerHeight = container.clientHeight;
+            var currentScroll = container.scrollTop;
+            var targetScroll = itemTop - (containerHeight / 2) + (itemHeight / 2);
+            var maxScroll = container.scrollHeight - containerHeight;
+            targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+
+            var distance = targetScroll - currentScroll;
+            var duration = 300;
+            var start = null;
+
+            function step(timestamp) {
+                if (!start) start = timestamp;
+                var progress = Math.min((timestamp - start) / duration, 1);
+                var ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+                container.scrollTop = currentScroll + (distance * ease);
+                if (progress < 1) requestAnimationFrame(step);
             }
+            requestAnimationFrame(step);
         }
 
-        this.start = function () {
+        this.start = function() {
             if (Lampa.Activity.active().activity !== this.activity) return;
             Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
-            
+
             Lampa.Controller.add('content', {
-                toggle: function () {
+                toggle: function() {
                     Lampa.Controller.collectionSet(scroll.render(), files.render());
                     Lampa.Controller.collectionFocus(false, scroll.render());
                 },
-                up: function () {
-                    if (selectedIndex > 0) {
-                        selectedIndex--;
-                        updateFocus();
-                        scrollToItem(selectedIndex);
-                    } else {
-                        Lampa.Controller.toggle('head');
-                    }
+                up: function() {
+                    if (selectedIndex > 0) { selectedIndex--; updateFocus(); scrollToItem(selectedIndex); }
+                    else Lampa.Controller.toggle('head');
                 },
-                down: function () {
-                    if (selectedIndex < items.length - 1) {
-                        selectedIndex++;
-                        updateFocus();
-                        scrollToItem(selectedIndex);
-                    }
+                down: function() {
+                    if (selectedIndex < items.length - 1) { selectedIndex++; updateFocus(); scrollToItem(selectedIndex); }
                 },
-                left: function () { Lampa.Controller.toggle('menu'); },
-                right: function () { 
-                    // Test current source
-                    if (items[selectedIndex]) {
-                        testAndPlay(items[selectedIndex]);
-                    }
-                },
-                ok: function () {
-                    // Test source on OK press
-                    if (items[selectedIndex]) {
-                        testAndPlay(items[selectedIndex]);
-                    }
-                },
+                left: function() { Lampa.Controller.toggle('menu'); },
+                right: function() { if (items[selectedIndex]) testAndPlay(items[selectedIndex]); },
+                ok: function() { if (items[selectedIndex]) testAndPlay(items[selectedIndex]); },
                 back: this.back
             });
             Lampa.Controller.toggle('content');
@@ -413,30 +245,16 @@
 
         function updateFocus() {
             items.forEach((item, idx) => {
-                if (idx === selectedIndex) {
-                    item.addClass('focus');
-                } else {
-                    item.removeClass('focus');
-                }
+                idx === selectedIndex ? item.addClass('focus') : item.removeClass('focus');
             });
         }
 
         async function testAndPlay(sourceData) {
-            Lampa.Notifier.show({ title: 'Testing Source', text: 'Checking availability and extracting stream...' });
-            
+            Lampa.Notifier.show({ title: 'Testing', text: 'Extracting stream...' });
             const result = await testSource(sourceData);
-            
+
             if (result.working) {
-                Lampa.Notifier.show({ 
-                    title: 'Source Working', 
-                    text: sourceData.name + ' is available. Extracting stream...',
-                    time: 2000
-                });
-                
-                // Try to extract direct stream (m3u8/mp4) from iframe
                 let streamInfo = null;
-                
-                // For MultiEmbed, try the direct API first
                 if (sourceData.name === 'MultiEmbed') {
                     const tmdbId = object.movie.id;
                     const isSeries = !!(object.movie.name && object.movie.first_air_date);
@@ -444,132 +262,69 @@
                     const episode = object.movie.episode_number || object.movie.episode || 1;
                     streamInfo = await getDirectStreamFromMultiEmbed(tmdbId, isSeries, season, episode);
                 }
-                
-                // If MultiEmbed didn't work or it's another source, try iframe extraction
                 if (!streamInfo && sourceData.type !== 'mixed') {
                     streamInfo = await extractStreamFromIframe(sourceData.url);
                 }
-                
-                // If we found a direct stream, play it directly
+
                 if (streamInfo && streamInfo.url) {
-                    Lampa.Notifier.show({ 
-                        title: 'Stream Found', 
-                        text: 'Playing ' + streamInfo.type.toUpperCase() + ' stream directly',
-                        time: 2000
-                    });
-                    
-                    Lampa.Player.play({
-                        url: streamInfo.url,
-                        title: object.movie.title || object.movie.name,
-                        quality: streamInfo.type === 'hls' ? 'auto' : undefined
-                    });
+                    Lampa.Notifier.show({ title: 'Playing', text: streamInfo.type.toUpperCase() + ' stream', time: 2000 });
+                    Lampa.Player.play({ url: streamInfo.url, title: object.movie.title || object.movie.name, quality: streamInfo.type === 'hls' ? 'auto' : undefined });
                 } else {
-                    // Fallback to iframe if no direct stream found
-                    Lampa.Notifier.show({ 
-                        title: 'Using Iframe', 
-                        text: 'Direct stream not found, using iframe player',
-                        time: 2000
-                    });
-                    
-                    Lampa.Player.play({
-                        url: sourceData.url,
-                        title: object.movie.title || object.movie.name,
-                        iframe: true
-                    });
+                    Lampa.Notifier.show({ title: 'Fallback', text: 'Using iframe', time: 2000 });
+                    Lampa.Player.play({ url: sourceData.url, title: object.movie.title || object.movie.name, iframe: true });
                 }
             } else {
-                Lampa.Notifier.show({ 
-                    title: 'Source Failed', 
-                    text: sourceData.name + ' is not accessible',
-                    time: 3000
-                });
+                Lampa.Notifier.show({ title: 'Failed', text: sourceData.name + ' not accessible', time: 3000 });
             }
         }
 
-        this.back = function () { Lampa.Activity.backward(); };
-        this.destroy = function () { 
-            scroll.destroy(); 
-            files.destroy(); 
-            html.remove();
-            items = [];
-        };
+        this.back = function() { Lampa.Activity.backward(); };
+        this.destroy = function() { scroll.destroy(); files.destroy(); html.remove(); items = []; };
 
-        this.buildList = function () {
+        this.buildList = function() {
             html.empty();
             items = [];
             var sources = getSources(object.movie);
             selectedIndex = 0;
 
-            sources.forEach(function (source, index) {
-                var item = $(
-                    '<div class="online selector" style="padding: 1em; margin-bottom: 0.5em; background: rgba(255,255,255,0.05); border-radius: 0.3em; transition: all 0.2s;">' +
-                    '<div class="online__title" style="font-size: 1.2em; font-weight: bold;">' + source.name + '</div>' +
-                    '<div class="online__quality" style="opacity: 0.7;">' + 
-                    (source.type === 'mixed' ? 'May provide direct HLS/m3u8' : 'Iframe Player') +
-                    ' | Press OK/Right to test' +
-                    '</div>' +
-                    '</div>'
-                );
+            sources.forEach(function(source, index) {
+                var item = $('<div class="online selector" style="padding:1em;margin-bottom:0.5em;background:rgba(255,255,255,0.05);border-radius:0.3em;">' +
+                    '<div class="online__title" style="font-size:1.2em;font-weight:bold;">' + source.name + '</div>' +
+                    '<div class="online__quality" style="opacity:0.7;">' + (source.type === 'mixed' ? 'Direct HLS/m3u8' : 'Iframe') + ' | Press OK</div>' +
+                    '</div>');
 
-                item.on('hover:enter', function () {
-                    selectedIndex = index;
-                    updateFocus();
-                    testAndPlay(source);
-                });
-
+                item.on('hover:enter', function() { selectedIndex = index; updateFocus(); testAndPlay(source); });
                 html.append(item);
                 items.push(item);
             });
 
             scroll.append(html);
-            
-            // Set initial focus
-            if (items.length > 0) {
-                items[0].addClass('focus');
-            }
-            
+            if (items.length > 0) items[0].addClass('focus');
             Lampa.Controller.enable('content');
         };
     }
 
-    // Register the component globally
     if (Lampa.Component && Lampa.Component.add) {
         Lampa.Component.add('multi_embed_component', MultiEmbedComponent);
     }
 
     function openMultiEmbed(movie) {
-        Lampa.Activity.push({
-            url: '',
-            title: 'Multi-Embed Sources',
-            component: 'multi_embed_component',
-            movie: movie,
-            page: 1
-        });
+        Lampa.Activity.push({ url: '', title: 'Multi-Embed Sources', component: 'multi_embed_component', movie: movie, page: 1 });
     }
 
-    // --- 4. UI INTEGRATION ---
-    // Inject button directly onto the Movie/TV Show details page
     Lampa.Listener.follow('full', function(e) {
         if (e.type !== 'complite') return;
         var render = e.object.activity.render();
         var movie = e.data.movie;
-
         if (render.find('.multi-embed-btn').length) return;
 
-        var btn = $(
-            '<div class="full-start__button selector multi-embed-btn" data-subtitle="Multi-Embed Sources">' +
-            '🌐 Multi-Embed' +
-            '</div>'
-        );
-
-        btn.on('hover:enter', function() {
-            openMultiEmbed(movie);
-        });
+        var btn = $('<div class="full-start__button selector multi-embed-btn" data-subtitle="Multi-Embed Sources">🌐 Multi-Embed</div>');
+        btn.on('hover:enter', function() { openMultiEmbed(movie); });
 
         var playBtn = render.find('.button--play');
         if (playBtn.length) playBtn.before(btn);
         else render.find('.full-start__buttons').append(btn);
     });
 
-    console.log('[Multi-Embed] Plugin initialized successfully.');
+    console.log('[Multi-Embed] Plugin initialized.');
 })();
