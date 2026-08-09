@@ -1,92 +1,96 @@
 # Lampa Plugin Development Guide
 
 ## Overview
+This guide explains how to develop plugins for Lampa, a popular media player application for smart TVs and set-top boxes. It includes detailed information about stream extraction, mass searching, and best practices.
 
-This guide explains how Lampa plugins work, including the architecture, API methods, and best practices for creating plugins that extract and play direct video streams (m3u8, mp4, ts) instead of using iframes.
+## Table of Contents
+1. [Lampa Architecture](#lampa-architecture)
+2. [Stream Extraction Techniques](#stream-extraction-techniques)
+3. [Mass Search Implementation](#mass-search-implementation)
+4. [Common Regex Patterns](#common-regex-patterns)
+5. [CORS Proxy Solutions](#cors-proxy-solutions)
+6. [Player Integration](#player-integration)
+7. [UI Components](#ui-components)
+8. [Debugging Tips](#debugging-tips)
+
+---
 
 ## Lampa Architecture
 
 ### Core Components
 
-1. **Lampa.Controller** - Manages navigation and focus
-2. **Lampa.Scroll** - Handles scrolling through lists
-3. **Lampa.Player** - Native video player that supports HLS (m3u8), MP4, and other formats
-4. **Lampa.Activity** - Manages screen states and transitions
-5. **Lampa.Notifier** - Shows toast notifications
-6. **Lampa.Explorer** - Creates file explorer-like interfaces
+#### 1. Lampa.Component
+Register custom components that can be loaded via Activity:
+```javascript
+Lampa.Component.add('my_component', MyComponentFunction);
+```
 
-### Key Concepts
+#### 2. Lampa.Activity
+Manages navigation stack and screens:
+```javascript
+Lampa.Activity.push({
+    url: '',
+    title: 'My Screen',
+    component: 'my_component',
+    movie: movieObject,
+    page: 1
+});
+```
 
-#### Controller System
+#### 3. Lampa.Controller
+Handles remote control input (OK, Back, Up, Down, Left, Right):
 ```javascript
 Lampa.Controller.add('content', {
-    toggle: function() { /* Called when controller is activated */ },
-    up: function() { /* Handle up navigation */ },
-    down: function() { /* Handle down navigation */ },
-    left: function() { /* Handle left navigation */ },
-    right: function() { /* Handle right navigation */ },
-    ok: function() { /* Handle OK/Enter button */ },
-    back: function() { /* Handle back button */ }
+    toggle: function() { /* ... */ },
+    up: function() { /* ... */ },
+    down: function() { /* ... */ },
+    left: function() { /* ... */ },
+    right: function() { /* ... */ },
+    ok: function() { /* ... */ },
+    back: function() { /* ... */ }
 });
-
-// Activate controller
 Lampa.Controller.toggle('content');
 ```
 
-#### Scroll Navigation
-The Lampa.Scroll class does NOT have a `scrollToIndex` method. Instead, you must:
-1. Calculate the position of the target element
-2. Use `scroll.wheel(delta)` to scroll programmatically
-3. Or use touch events on mobile devices
-
-Example:
+#### 4. Lampa.Scroll
+Creates scrollable containers:
 ```javascript
-function scrollToItem(index, items, scroll) {
-    var item = items[index][0]; // Get DOM element
-    var itemTop = item.offsetTop;
-    var currentScroll = -scroll.position();
-    var targetScroll = itemTop - 200; // Offset for visibility
-    
-    scroll.wheel(targetScroll - currentScroll);
-}
+var scroll = new Lampa.Scroll({ mask: true, over: true });
+scroll.append(content);
 ```
 
-#### Player API
+#### 5. Lampa.Player
+Native video player for direct streams:
 ```javascript
-// Play direct stream (m3u8/mp4)
 Lampa.Player.play({
     url: 'https://example.com/stream.m3u8',
     title: 'Movie Title',
-    quality: 'auto' // For HLS streams
-});
-
-// Play via iframe (not recommended for TV devices)
-Lampa.Player.play({
-    url: 'https://example.com/embed/player',
-    title: 'Movie Title',
-    iframe: true
+    quality: 'auto'
 });
 ```
+
+#### 6. Lampa.Listener
+Hooks into existing Lampa events:
+```javascript
+Lampa.Listener.follow('full', function(e) {
+    if (e.type !== 'complite') return;
+    // Modify the full screen
+});
+```
+
+---
 
 ## Stream Extraction Techniques
 
 ### Why Extract Streams?
+Many embed sources use iframes which are not supported on all TV platforms. Extracting direct .m3u8 (HLS) or .mp4 links allows native playback in Lampa.Player.
 
-Iframes are problematic in Lampa because:
-1. **TV Compatibility**: Many TV browsers don't support iframes well
-2. **Navigation Issues**: Remote controls can't interact with iframe content
-3. **Performance**: Iframes add overhead and may be blocked by CORS
-4. **Quality Control**: Can't select quality or enable subtitles properly
-
-### Extraction Methods
-
-#### Method 1: Fetch and Parse HTML
+### Method 1: Fetch Iframe HTML and Parse
 ```javascript
 async function extractStreamFromIframe(iframeUrl) {
-    const response = await fetch(iframeUrl);
-    const html = await response.text();
+    const html = await fetchWithProxy(iframeUrl);
     
-    // Pattern 1: Direct m3u8 URLs
+    // Find m3u8 URLs
     const m3u8Pattern = /https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/gi;
     const matches = html.match(m3u8Pattern);
     
@@ -94,303 +98,408 @@ async function extractStreamFromIframe(iframeUrl) {
         return { type: 'hls', url: matches[0] };
     }
     
-    // Pattern 2: Video element src
-    const videoSrcPattern = /<video[^>]*src=["']([^"']+)["']/i;
-    const videoMatch = html.match(videoSrcPattern);
-    
-    if (videoMatch && videoMatch[1]) {
-        return { type: 'hls', url: videoMatch[1] };
-    }
-    
-    // Pattern 3: Player configuration (JSON in script)
-    const configPattern = /file["']\s*:\s*["']([^"']+)["']/i;
-    const configMatch = html.match(configPattern);
-    
-    if (configMatch && configMatch[1]) {
-        return { type: 'hls', url: configMatch[1] };
-    }
-    
     return null;
 }
 ```
 
-#### Method 2: API Endpoints
-Some embed providers offer direct APIs:
+### Method 2: Use Provider APIs
+Some providers like MultiEmbed have direct APIs:
 ```javascript
-async function getDirectStream(tmdbId, isSeries, season, episode) {
-    let apiUrl = isSeries 
-        ? `https://provider.com/api/tv/${tmdbId}/${season}/${episode}`
-        : `https://provider.com/api/movie/${tmdbId}`;
+async function getDirectStreamFromMultiEmbed(tmdbId, isSeries, season, episode) {
+    let apiUrl;
+    if (isSeries) {
+        apiUrl = `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`;
+    } else {
+        apiUrl = `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`;
+    }
     
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, { redirect: 'follow' });
+    
+    // Check for JSON response
     const data = await response.json();
+    if (data.url && data.url.endsWith('.m3u8')) {
+        return { type: 'hls', url: data.url };
+    }
     
-    if (data.url && (data.url.includes('.m3u8') || data.url.includes('.mp4'))) {
-        return { type: data.url.includes('.m3u8') ? 'hls' : 'mp4', url: data.url };
+    // Check redirect URL
+    if (response.url.endsWith('.m3u8')) {
+        return { type: 'hls', url: response.url };
     }
     
     return null;
 }
 ```
 
-#### Method 3: Redirect Following
-Some providers redirect to the actual stream:
+### Method 3: Video Element Parsing
+Look for `<video>` tags with src attributes:
 ```javascript
-async function followRedirect(url) {
-    const response = await fetch(url, { redirect: 'follow' });
-    const finalUrl = response.url;
-    
-    if (finalUrl.includes('.m3u8') || finalUrl.includes('.mp4')) {
-        return { 
-            type: finalUrl.includes('.m3u8') ? 'hls' : 'mp4', 
-            url: finalUrl 
-        };
-    }
-    
-    return null;
+const videoSrcPattern = /<video[^>]*src=["']([^"']+)["'][^>]*>/i;
+const videoMatch = html.match(videoSrcPattern);
+if (videoMatch && videoMatch[1]) {
+    return { type: 'hls', url: videoMatch[1] };
 }
 ```
 
-## Common Stream Patterns
-
-### M3U8 (HLS) Streams
-- Extension: `.m3u8`
-- MIME type: `application/vnd.apple.mpegurl`
-- Lampa handles these natively with quality selection
-
-### MP4 Streams
-- Extension: `.mp4`
-- MIME type: `video/mp4`
-- Direct playback without transcoding
-
-### TS Segments
-- Extension: `.ts`
-- Usually referenced inside m3u8 playlists
-- Don't play individual TS files directly
-
-### Regex Patterns for Extraction
-
+### Method 4: Source Element Parsing
+Look for `<source>` tags:
 ```javascript
-// M3U8 URLs
-const m3u8Pattern = /https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/gi;
+const sourcePattern = /<source[^>]*src=["']([^"']+)[\"'][^>]*>/gi;
+let sourceMatch;
+while ((sourceMatch = sourcePattern.exec(html)) !== null) {
+    const ext = sourceMatch[1].split('.').pop().toLowerCase();
+    if (ext === 'm3u8' || ext === 'mp4') {
+        return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: sourceMatch[1] };
+    }
+}
+```
 
-// MP4 URLs
-const mp4Pattern = /https?:\/\/[^"'\s]+\.mp4[^"'\s]*/gi;
-
-// TS segment URLs
-const tsPattern = /https?:\/\/[^"'\s]+\.ts[^"'\s]*/gi;
-
-// Master playlist (often contains "master" in URL)
-const masterPattern = /https?:\/\/[^"'\s]*master[^"'\s]*\.m3u8[^"'\s]*/gi;
-
-// Video source element
-const sourcePattern = /<source[^>]*src=["']([^"']+)["'][^>]*>/gi;
-
-// Player config patterns
+### Method 5: Player Configuration JSON
+Many players embed config in script tags:
+```javascript
 const configPatterns = [
-    /file["']\s*:\s*["']([^"']+)[\"']/i,
-    /url["']\s*:\s*["']([^"']+)[\"']/i,
-    /src["']\s*:\s*["']([^"']+)[\"']/i
+    /file["']\s*:\s*["']([^"']+)["']/i,
+    /url["']\s*:\s*["']([^"']+)["']/i,
+    /src["']\s*:\s*["']([^"']+)["']/i
 ];
-```
 
-## Best Practices
-
-### 1. Always Provide Fallback
-If stream extraction fails, fall back to iframe:
-```javascript
-if (streamInfo && streamInfo.url) {
-    Lampa.Player.play({
-        url: streamInfo.url,
-        title: movie.title
-    });
-} else {
-    Lampa.Player.play({
-        url: iframeUrl,
-        iframe: true
-    });
+for (const pattern of configPatterns) {
+    const configMatch = html.match(pattern);
+    if (configMatch && configMatch[1]) {
+        const streamUrl = configMatch[1].replace(/\\/g, '');
+        const ext = streamUrl.split('.').pop().toLowerCase();
+        if (ext === 'm3u8' || ext === 'mp4') {
+            return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: streamUrl };
+        }
+    }
 }
 ```
 
-### 2. Handle CORS
-Many embed servers block cross-origin requests:
+---
+
+## Mass Search Implementation
+
+### What is Mass Search?
+Mass search queries multiple embed sources simultaneously to find working streams quickly.
+
+### Implementation Pattern
 ```javascript
-try {
-    const response = await fetch(url, {
-        method: 'GET',
-        mode: 'cors',
-        headers: {
-            'Accept': 'text/html'
+async function massSearch(sources) {
+    const results = [];
+    const promises = sources.map(async (source) => {
+        try {
+            const streamInfo = await extractStreamFromIframe(source.url);
+            if (streamInfo) {
+                results.push({
+                    name: source.name,
+                    url: streamInfo.url,
+                    type: streamInfo.type,
+                    working: true
+                });
+            }
+        } catch (e) {
+            console.log('Source failed:', source.name);
         }
     });
-} catch (error) {
-    console.error('CORS error:', error);
-    return null;
+    
+    await Promise.allSettled(promises);
+    return results.filter(r => r.working);
 }
 ```
 
-### 3. Add User Feedback
-Use Notifier to inform users:
+### Parallel Processing
+Use `Promise.allSettled()` to wait for all sources even if some fail:
+```javascript
+const results = await Promise.allSettled(
+    sources.map(source => testSource(source))
+);
+```
+
+---
+
+## Common Regex Patterns
+
+### M3U8 URLs
+```javascript
+/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/gi
+```
+
+### MP4 URLs
+```javascript
+/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/gi
+```
+
+### TS Segment Files
+```javascript
+/https?:\/\/[^"'\s]+\.ts[^"'\s]*/gi
+```
+
+### Video Tag with Src
+```javascript
+/<video[^>]*src=["']([^"']+)["'][^>]*>/i
+```
+
+### Source Elements
+```javascript
+/<source[^>]*src=["']([^"']+)[\"'][^>]*>/gi
+```
+
+### Player Config (file/url/src)
+```javascript
+/file["']\s*:\s*["']([^"']+)["']/i
+/url["']\s*:\s*["']([^"']+)["']/i
+/src["']\s*:\s*["']([^"']+)["']/i
+```
+
+### Master Playlist Detection
+```javascript
+/https?:\/\/[^"'\s]*master[^"'\s]*\.m3u8[^"'\s]*/gi
+```
+
+---
+
+## CORS Proxy Solutions
+
+### Why Proxies Are Needed
+Browser security (CORS) prevents fetching cross-origin iframe content directly. Proxies bypass this.
+
+### Recommended Proxies
+```javascript
+const CORS_PROXIES = [
+    'https://api.allorigins.win/raw?url=',
+    'https://corsproxy.io/?',
+    'https://thingproxy.freeboard.io/fetch/'
+];
+
+async function fetchWithProxy(url) {
+    for (const proxy of CORS_PROXIES) {
+        try {
+            const response = await fetch(proxy + encodeURIComponent(url), {
+                method: 'GET',
+                headers: {
+                    'Accept': 'text/html,application/xhtml+xml',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+            if (response.ok) {
+                return await response.text();
+            }
+        } catch (e) {
+            console.log('Proxy failed:', proxy);
+            continue;
+        }
+    }
+    throw new Error('All proxies failed');
+}
+```
+
+---
+
+## Player Integration
+
+### Native HLS Playback
+```javascript
+Lampa.Player.play({
+    url: 'https://example.com/stream.m3u8',
+    title: 'Movie Title',
+    quality: 'auto'  // Let Lampa choose quality
+});
+```
+
+### MP4 Playback
+```javascript
+Lampa.Player.play({
+    url: 'https://example.com/video.mp4',
+    title: 'Movie Title'
+});
+```
+
+### Iframe Fallback
+When direct stream extraction fails:
+```javascript
+Lampa.Player.play({
+    url: 'https://embed.source.com/embed/movie/123',
+    title: 'Movie Title',
+    iframe: true
+});
+```
+
+---
+
+## UI Components
+
+### Scroll Component
+```javascript
+var scroll = new Lampa.Scroll({ mask: true, over: true });
+scroll.append(content);
+```
+
+### Smooth Scrolling to Item
+```javascript
+function scrollToItem(index, items, scroll) {
+    if (!items[index]) return;
+    
+    var itemElement = items[index][0];
+    var scrollContainer = scroll.render()[0];
+    
+    var itemTop = itemElement.offsetTop;
+    var itemHeight = itemElement.offsetHeight;
+    var containerHeight = scrollContainer.clientHeight;
+    var currentScroll = scrollContainer.scrollTop;
+    
+    var targetScroll = itemTop - (containerHeight / 2) + (itemHeight / 2);
+    var maxScroll = scrollContainer.scrollHeight - containerHeight;
+    targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+    
+    var distance = targetScroll - currentScroll;
+    var duration = 300;
+    var startTime = null;
+    
+    function easeInOutQuad(t) {
+        return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    }
+    
+    function animate(currentTime) {
+        if (!startTime) startTime = currentTime;
+        var elapsed = currentTime - startTime;
+        var progress = Math.min(elapsed / duration, 1);
+        var eased = easeInOutQuad(progress);
+        
+        scrollContainer.scrollTop = currentScroll + (distance * eased);
+        
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        }
+    }
+    
+    requestAnimationFrame(animate);
+}
+```
+
+### Focus Management
+```javascript
+function updateFocus(items, selectedIndex) {
+    items.forEach((item, idx) => {
+        if (idx === selectedIndex) {
+            item.addClass('focus');
+        } else {
+            item.removeClass('focus');
+        }
+    });
+}
+```
+
+---
+
+## Debugging Tips
+
+### Console Logging
+```javascript
+console.log('[Plugin] Message:', data);
+```
+
+### Notifier for User Feedback
 ```javascript
 Lampa.Notifier.show({
-    title: 'Stream Found',
-    text: 'Playing HLS stream directly',
+    title: 'Testing Source',
+    text: 'Checking availability...',
     time: 2000
 });
 ```
 
-### 4. Cache Results
-Avoid repeated extraction:
+### Error Handling
 ```javascript
-const streamCache = {};
-
-async function getStream(source) {
-    if (streamCache[source.url]) {
-        return streamCache[source.url];
-    }
-    
-    const stream = await extractStreamFromIframe(source.url);
-    streamCache[source.url] = stream;
-    return stream;
-}
-```
-
-### 5. Respect Rate Limits
-Add delays between requests:
-```javascript
-async function testSources(sources) {
-    for (let i = 0; i < sources.length; i++) {
-        const result = await testSource(sources[i]);
-        if (result.working) break;
-        
-        if (i < sources.length - 1) {
-            await new Promise(r => setTimeout(r, 500)); // 500ms delay
-        }
-    }
-}
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"scrollToIndex is not a function"**
-   - Solution: Implement custom scroll function using `scroll.wheel()`
-
-2. **CORS errors when fetching iframe**
-   - Solution: Use no-cors mode or find alternative source
-
-3. **No stream found in HTML**
-   - Solution: The stream may be loaded dynamically via JavaScript
-   - Try checking network requests or use provider's API
-
-4. **Iframe works but direct stream doesn't**
-   - Solution: The stream may require specific headers/referer
-   - Fall back to iframe for this source
-
-### Debug Tips
-
-```javascript
-// Log extracted streams
-console.log('[Plugin] Found stream:', streamInfo);
-
-// Check HTML content
-console.log('[Plugin] HTML length:', html.length);
-console.log('[Plugin] Contains m3u8:', html.includes('.m3u8'));
-
-// Test URL accessibility
 try {
-    const test = await fetch(streamUrl, { method: 'HEAD' });
-    console.log('[Plugin] Stream accessible:', test.ok);
-} catch (e) {
-    console.error('[Plugin] Stream error:', e.message);
+    // Your code
+} catch (error) {
+    console.error('[Plugin] Error:', error.message);
+    Lampa.Notifier.show({
+        title: 'Error',
+        text: error.message,
+        time: 3000
+    });
 }
 ```
 
-## Example Plugin Structure
+### Testing Source Availability
+```javascript
+async function testSource(source) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    
+    try {
+        const response = await fetch(source.url, {
+            method: 'HEAD',
+            mode: 'no-cors',
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        return { working: true };
+    } catch (error) {
+        clearTimeout(timeout);
+        return { working: false, error: error.message };
+    }
+}
+```
+
+---
+
+## Best Practices
+
+1. **Always try direct stream extraction first** - iframes don't work on all TV platforms
+2. **Use multiple CORS proxies** - some may be blocked or rate-limited
+3. **Implement fallback mechanisms** - if extraction fails, fall back to iframe
+4. **Provide user feedback** - use Lampa.Notifier to show what's happening
+5. **Handle errors gracefully** - don't crash the plugin on single source failures
+6. **Prioritize sources** - try the most reliable sources first
+7. **Cache results when possible** - reduce API calls and improve performance
+8. **Respect rate limits** - add delays between requests if needed
+
+---
+
+## Example Complete Plugin Structure
 
 ```javascript
 (function() {
     'use strict';
-    
-    // 1. Configuration and sources
-    function getSources(movie) { ... }
-    
-    // 2. Stream extraction functions
-    async function extractStreamFromIframe(url) { ... }
-    async function getDirectStreamFromAPI(id, params) { ... }
-    
-    // 3. UI Component
+    if (window.MyPlugin) return;
+    window.MyPlugin = true;
+
+    // 1. Define sources
+    function getSources(movie) {
+        // Return array of source objects
+    }
+
+    // 2. Stream extraction
+    async function extractStreamFromIframe(url) {
+        // Fetch and parse iframe
+    }
+
+    // 3. Test sources
+    async function testSource(source) {
+        // Check if source is working
+    }
+
+    // 4. UI Component
     function MyComponent(object) {
         var scroll = new Lampa.Scroll({ mask: true, over: true });
-        var items = [];
-        var selectedIndex = 0;
+        var files = new Lampa.Explorer(object);
         
-        // Custom scroll function
-        function scrollToItem(index) { ... }
-        
-        this.start = function() {
-            Lampa.Controller.add('content', {
-                up: function() { 
-                    if (selectedIndex > 0) {
-                        selectedIndex--;
-                        scrollToItem(selectedIndex);
-                    }
-                },
-                down: function() {
-                    if (selectedIndex < items.length - 1) {
-                        selectedIndex++;
-                        scrollToItem(selectedIndex);
-                    }
-                },
-                ok: function() {
-                    playSource(items[selectedIndex]);
-                }
-            });
-        };
-        
-        async function playSource(source) {
-            // Extract stream
-            const stream = await extractStreamFromIframe(source.url);
-            
-            // Play direct or fallback to iframe
-            if (stream && stream.url) {
-                Lampa.Player.play({
-                    url: stream.url,
-                    title: object.movie.title
-                });
-            } else {
-                Lampa.Player.play({
-                    url: source.url,
-                    iframe: true
-                });
-            }
-        }
+        this.create = function() { /* ... */ };
+        this.render = function() { /* ... */ };
+        this.start = function() { /* ... */ };
+        this.back = function() { /* ... */ };
+        this.destroy = function() { /* ... */ };
     }
-    
-    // 4. Register component
+
+    // 5. Register component
     Lampa.Component.add('my_component', MyComponent);
-    
-    // 5. Inject UI
+
+    // 6. Add button to movie page
     Lampa.Listener.follow('full', function(e) {
-        // Add button to movie page
+        if (e.type !== 'complite') return;
+        // Add button
     });
-    
+
+    console.log('[MyPlugin] Initialized');
 })();
 ```
-
-## Resources
-
-- Lampa Source Code: https://github.com/yumata/lampa-source
-- Lampa Documentation: Run `npm run doc` in lampa-source
-- HLS Specification: https://tools.ietf.org/html/rfc8216
-- MDN Fetch API: https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API
-
-## Legal Disclaimer
-
-This plugin is provided for educational purposes only. Ensure compliance with:
-- Your local laws and regulations
-- Terms of service of streaming providers
-- Copyright and licensing requirements
-
-Do not use this plugin to access content you don't have rights to view.
