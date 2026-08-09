@@ -21,6 +21,7 @@
             sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}` });
             sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}` });
             sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}` });
+            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}` });
         } else {
             sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/movie/${tmdbId}` });
             sources.push({ name: 'VidSrc.cc', url: `https://vidsrc.cc/embed/movie/${tmdbId}` });
@@ -30,6 +31,7 @@
             sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}` });
             sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1` });
             sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/movie/${tmdbId}` });
+            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/movie/${tmdbId}` });
         }
         return sources;
     }
@@ -75,9 +77,10 @@
             var sources = getSources(object.movie);
             
             sources.forEach(function (source) {
+                // Removed Lampa.Utils.escape to prevent crashes
                 var item = $(
                     '<div class="online selector" style="padding: 1em; margin-bottom: 0.5em; background: rgba(255,255,255,0.05); border-radius: 0.3em;">' +
-                    '<div class="online__title" style="font-size: 1.2em; font-weight: bold;">' + Lampa.Utils.escape(source.name) + '</div>' +
+                    '<div class="online__title" style="font-size: 1.2em; font-weight: bold;">' + source.name + '</div>' +
                     '<div class="online__quality" style="opacity: 0.7;">Iframe Player (Subtitles/Audio selectable inside player)</div>' +
                     '</div>'
                 );
