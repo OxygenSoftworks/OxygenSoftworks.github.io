@@ -1,199 +1,142 @@
 (function() {
     'use strict';
-    if (window.VixSrcLampaPlugin) return;
-    window.VixSrcLampaPlugin = true;
+    if (window.MultiEmbedPlugin) return;
+    window.MultiEmbedPlugin = true;
 
-    // VixSrc Base URL (from the Sootio repository)
-    const BASE_URL = 'https://vixsrc.to';
+    // --- 1. RELIABLE IFRAME SOURCES ---
+    function getSources(movie) {
+        const tmdbId = movie.id;
+        const isSeries = !!(movie.name && movie.first_air_date);
+        const season = movie.season_number || movie.season || 1;
+        const episode = movie.episode_number || movie.episode || 1;
 
-    function buildPageUrl(tmdbId, type, season, episode) {
-        if (type === 'series' && season && episode) {
-            return `${BASE_URL}/tv/${tmdbId}/${season}/${episode}`;
+        const sources = [];
+
+        if (isSeries) {
+            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}` });
+            sources.push({ name: 'VidSrc.cc', url: `https://vidsrc.cc/embed/tv/${tmdbId}/${season}/${episode}` });
+            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}` });
+            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}` });
+            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}` });
+            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}` });
+            sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}` });
+            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}` });
+        } else {
+            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/movie/${tmdbId}` });
+            sources.push({ name: 'VidSrc.cc', url: `https://vidsrc.cc/embed/movie/${tmdbId}` });
+            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/movie/${tmdbId}` });
+            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/movie/tmdb/${tmdbId}` });
+            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/movie/${tmdbId}` });
+            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}` });
+            sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1` });
+            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/movie/${tmdbId}` });
         }
-        return `${BASE_URL}/movie/${tmdbId}`;
+        return sources;
     }
 
-    function parseHeightFromPlaylist(playlistText) {
-        let maxHeight = 0;
-        const regex = /RESOLUTION=\d+x(\d+)/gi;
-        let m;
-        while ((m = regex.exec(playlistText)) !== null) {
-            const h = parseInt(m[1], 10);
-            if (!Number.isNaN(h) && h > maxHeight) maxHeight = h;
-        }
-        return maxHeight || undefined;
-    }
+    // --- 2. LAMPA UI COMPONENT ---
+    function MultiEmbedComponent(object) {
+        var scroll = new Lampa.Scroll({ mask: true, over: true });
+        var files = new Lampa.Explorer(object);
+        var html = $('<div></div>');
 
-    function parseLanguagesFromPlaylist(playlistText) {
-        const langs = new Set();
-        const regex = /LANGUAGE="([a-z]{2})"/gi;
-        let m;
-        while ((m = regex.exec(playlistText)) !== null) {
-            langs.add(m[1].toLowerCase());
-        }
-        return Array.from(langs);
-    }
-
-    // Smart English Prioritization (Does not filter, just sorts to the top)
-    function getEnglishRank(title, langs) {
-        let rank = 0;
-        const text = (title + ' ' + (langs || []).join(' ')).toLowerCase();
-        
-        // Bonus for English
-        if (text.includes('english') || text.includes('eng') || text.includes('en')) rank += 100;
-        if (text.includes('dub')) rank += 20;
-        if (text.includes('sub')) rank += 10;
-        
-        // Penalty for foreign languages and dual-audio
-        const nonEnglish = ['hindi', 'russian', 'spanish', 'french', 'german', 'italian', 'portuguese', 'korean', 'japanese', 'chinese', 'arabic', 'turkish', 'latino', 'tamil', 'telugu', 'polish', 'ukrainian'];
-        for (const lang of nonEnglish) {
-            if (text.includes(lang)) rank -= 100;
-        }
-        if (text.includes('dual audio') || text.includes('multi-audio') || text.includes('dual-audio') || text.includes('multi')) rank -= 50;
-        
-        return rank;
-    }
-
-    async function fetchVixSrcStreams(movie, season, episode) {
-        // Lampa uses TMDB IDs internally, which VixSrc supports directly
-        const tmdbId = movie.id; 
-        const type = movie.name ? 'series' : 'movie';
-        const pageUrl = buildPageUrl(tmdbId, type, season, episode);
-
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+        this.create = function () {
+            scroll.minus();
+            files.appendFiles(scroll.render());
+            files.appendHead($('<div class="simple-text" style="padding: 1em; text-align: center; font-size: 1.2em;">Select an Embed Source</div>'));
+            return this.render();
         };
 
-        try {
-            const response = await fetch(pageUrl, { headers });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            
-            const html = await response.text();
-            
-            // Extract token, expires, url from HTML
-            const tokenMatch = html.match(/['"]token['"]\s*:\s*['"]([^'"]+)['"]/i);
-            const expiresMatch = html.match(/['"]expires['"]\s*:\s*['"]([^'"]+)['"]/i);
-            const urlMatch = html.match(/url\s*:\s*['"]([^'"]+)['"]/i);
+        this.render = function () { return files.render(); };
 
-            if (!tokenMatch || !expiresMatch || !urlMatch) {
-                // Fallback: Play as an Iframe (VixSrc is a famous iframe provider)
-                return [{
-                    name: 'VixSrc Embed',
-                    title: `${movie.title || movie.name} (VixSrc Embed)\n🔗 Direct Player`,
-                    url: pageUrl,
-                    iframe: true
-                }];
-            }
-
-            const baseUrl = new URL(urlMatch[1]);
-            const playlistUrl = new URL(`${baseUrl.origin}${baseUrl.pathname}.m3u8${baseUrl.search}`);
-            playlistUrl.searchParams.set('token', tokenMatch[1]);
-            playlistUrl.searchParams.set('expires', expiresMatch[1]);
-            playlistUrl.searchParams.set('h', '1');
-
-            const playlistRes = await fetch(playlistUrl.toString(), { headers: { ...headers, Referer: pageUrl } });
-            let playlistText = '';
-            if (playlistRes.ok) playlistText = await playlistRes.text();
-
-            const height = playlistText ? parseHeightFromPlaylist(playlistText) : undefined;
-            const languages = playlistText ? parseLanguagesFromPlaylist(playlistText) : [];
-            const title = `VixSrc ${height || 'Auto'}`;
-
-            return [{
-                name: 'VixSrc',
-                title: `${movie.title || movie.name}\n🔗 ${title}`,
-                url: playlistUrl.toString(),
-                resolution: height ? `${height}p` : undefined,
-                languages,
-                behaviorHints: { bingeGroup: 'vixsrc-streams' }
-            }];
-
-        } catch (error) {
-            console.error('[VixSrc] Error fetching streams:', error);
-            // Fallback to iframe if direct extraction fails
-            return [{
-                name: 'VixSrc Embed',
-                title: `${movie.title || movie.name} (VixSrc Embed)\n🔗 Direct Player`,
-                url: pageUrl,
-                iframe: true
-            }];
-        }
-    }
-
-    async function playVixSrcAuto(movie, season, episode) {
-        Lampa.Noty.show('🔍 Fetching VixSrc streams...');
-        
-        const streams = await fetchVixSrcStreams(movie, season, episode);
-        if (!streams || streams.length === 0) {
-            Lampa.Noty.show('❌ No streams found from VixSrc.');
-            return;
-        }
-
-        // Sort by English priority
-        streams.sort((a, b) => {
-            const rankA = getEnglishRank(a.title, a.languages);
-            const rankB = getEnglishRank(b.title, b.languages);
-            if (rankA !== rankB) return rankB - rankA;
-            return 0;
-        });
-
-        const best = streams[0];
-        Lampa.Noty.show('▶️ Playing: ' + best.name);
-
-        if (best.iframe) {
-            // Lampa can play iframes natively
-            Lampa.Player.play({
-                url: best.url,
-                title: movie.title || movie.name,
-                iframe: true
+        this.start = function () {
+            if (Lampa.Activity.active().activity !== this.activity) return;
+            Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
+            Lampa.Controller.add('content', {
+                toggle: function () {
+                    Lampa.Controller.collectionSet(scroll.render(), files.render());
+                    Lampa.Controller.collectionFocus(false, scroll.render());
+                },
+                up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
+                down: function () { Navigator.move('down'); },
+                left: function () { Lampa.Controller.toggle('menu'); },
+                right: function () { Navigator.move('right'); },
+                back: this.back
             });
-        } else {
-            const entry = {
-                url: best.url,
-                title: movie.title || movie.name,
-                subtitles: []
-            };
-            Lampa.Player.play(entry);
-            Lampa.Player.playlist([entry]);
-        }
+            Lampa.Controller.toggle('content');
+            this.buildList();
+        };
+
+        this.back = function () { Lampa.Activity.backward(); };
+        this.destroy = function () { scroll.destroy(); files.destroy(); html.remove(); };
+
+        this.buildList = function () {
+            html.empty();
+            var sources = getSources(object.movie);
+            
+            sources.forEach(function (source) {
+                var item = $(
+                    '<div class="online selector" style="padding: 1em; margin-bottom: 0.5em; background: rgba(255,255,255,0.05); border-radius: 0.3em;">' +
+                    '<div class="online__title" style="font-size: 1.2em; font-weight: bold;">' + Lampa.Utils.escape(source.name) + '</div>' +
+                    '<div class="online__quality" style="opacity: 0.7;">Iframe Player (Subtitles/Audio selectable inside player)</div>' +
+                    '</div>'
+                );
+
+                item.on('hover:enter', function () {
+                    // Play via Lampa's native Iframe player
+                    Lampa.Player.play({
+                        url: source.url,
+                        title: object.movie.title || object.movie.name,
+                        iframe: true
+                    });
+                });
+
+                html.append(item);
+            });
+
+            scroll.append(html);
+            Lampa.Controller.enable('content');
+        };
     }
 
-    // --- LAMPA UI INTEGRATION ---
-    if (Lampa.Online && Lampa.Online.register) {
-        Lampa.Online.register('vixsrc_auto', {
-            title: '🎬 VixSrc Auto',
-            search: function(movie, oncomplite) {
-                const season = movie.season_number || movie.season;
-                const episode = movie.episode_number || movie.episode;
-                playVixSrcAuto(movie, season, episode);
-                if (oncomplite) oncomplite([]);
-            },
-            onContextMenu: function() { return { name: '🎬 VixSrc Auto' }; }
+    // Register the component globally
+    if (Lampa.Component && Lampa.Component.add) {
+        Lampa.Component.add('multi_embed_component', MultiEmbedComponent);
+    }
+
+    function openMultiEmbed(movie) {
+        Lampa.Activity.push({
+            url: '',
+            title: 'Multi-Embed Sources',
+            component: 'multi_embed_component',
+            movie: movie,
+            page: 1
         });
     }
 
+    // --- 3. UI INTEGRATION ---
+    // Inject button directly onto the Movie/TV Show details page
     Lampa.Listener.follow('full', function(e) {
         if (e.type !== 'complite') return;
-        const render = e.object.activity.render();
-        const movie = e.data.movie;
-        if (render.find('.vixsrc-auto-btn').length) return;
+        var render = e.object.activity.render();
+        var movie = e.data.movie;
+        
+        if (render.find('.multi-embed-btn').length) return;
 
-        const btn = $(`
-            <div class="full-start__button selector vixsrc-auto-btn" data-subtitle="VixSrc Auto-Play">
-                🎬 VixSrc Auto
-            </div>
-        `);
+        var btn = $(
+            '<div class="full-start__button selector multi-embed-btn" data-subtitle="Multi-Embed Sources">' +
+            '🌐 Multi-Embed' +
+            '</div>'
+        );
 
         btn.on('hover:enter', function() {
-            const season = movie.season_number || movie.season;
-            const episode = movie.episode_number || movie.episode;
-            playVixSrcAuto(movie, season, episode);
+            openMultiEmbed(movie);
         });
 
-        const playBtn = render.find('.button--play');
+        var playBtn = render.find('.button--play');
         if (playBtn.length) playBtn.before(btn);
         else render.find('.full-start__buttons').append(btn);
     });
 
-    console.log('[VixSrc Auto] Plugin initialized.');
+    console.log('[Multi-Embed] Plugin initialized successfully.');
 })();
