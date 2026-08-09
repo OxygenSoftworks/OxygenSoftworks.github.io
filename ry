@@ -140,7 +140,151 @@
         return sources;
     }
 
-    // --- 2. SOURCE TESTING FUNCTION ---
+    // --- 2. M3U8/TS STREAM EXTRACTION FROM IFRAME ---
+    // Extracts direct video streams (m3u8, mp4, ts) from iframe sources
+    async function extractStreamFromIframe(iframeUrl) {
+        try {
+            // Try to fetch the iframe page and extract stream URLs
+            const response = await fetch(iframeUrl, {
+                method: 'GET',
+                mode: 'cors',
+                headers: {
+                    'Accept': 'text/html,application/xhtml+xml'
+                }
+            });
+
+            if (!response.ok) throw new Error('Failed to fetch iframe');
+
+            const html = await response.text();
+
+            // Pattern 1: Direct m3u8 URLs
+            const m3u8Pattern = /https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/gi;
+            const m3u8Matches = html.match(m3u8Pattern);
+            if (m3u8Matches && m3u8Matches.length > 0) {
+                console.log('[Multi-Embed] Found m3u8:', m3u8Matches[0]);
+                return { type: 'hls', url: m3u8Matches[0] };
+            }
+
+            // Pattern 2: Direct mp4 URLs
+            const mp4Pattern = /https?:\/\/[^"'\s]+\.mp4[^"'\s]*/gi;
+            const mp4Matches = html.match(mp4Pattern);
+            if (mp4Matches && mp4Matches.length > 0) {
+                console.log('[Multi-Embed] Found mp4:', mp4Matches[0]);
+                return { type: 'mp4', url: mp4Matches[0] };
+            }
+
+            // Pattern 3: TS segment files (usually in playlists)
+            const tsPattern = /https?:\/\/[^"'\s]+\.ts[^"'\s]*/gi;
+            const tsMatches = html.match(tsPattern);
+            if (tsMatches && tsMatches.length > 0) {
+                // Find the master playlist that references these TS files
+                console.log('[Multi-Embed] Found TS segments, looking for playlist...');
+                const playlistPattern = /https?:\/\/[^"'\s]*master[^"'\s]*\.m3u8[^"'\s]*/gi;
+                const playlistMatch = html.match(playlistPattern);
+                if (playlistMatch && playlistMatch.length > 0) {
+                    console.log('[Multi-Embed] Found master playlist:', playlistMatch[0]);
+                    return { type: 'hls', url: playlistMatch[0] };
+                }
+            }
+
+            // Pattern 4: Check for video element with src
+            const videoSrcPattern = /<video[^>]*src=["']([^"']+)["'][^>]*>/i;
+            const videoMatch = html.match(videoSrcPattern);
+            if (videoMatch && videoMatch[1]) {
+                console.log('[Multi-Embed] Found video src:', videoMatch[1]);
+                const ext = videoMatch[1].split('.').pop().toLowerCase();
+                if (ext === 'm3u8') return { type: 'hls', url: videoMatch[1] };
+                if (ext === 'mp4') return { type: 'mp4', url: videoMatch[1] };
+            }
+
+            // Pattern 5: Check for source elements
+            const sourcePattern = /<source[^>]*src=["']([^"']+)["'][^>]*>/gi;
+            let sourceMatch;
+            while ((sourceMatch = sourcePattern.exec(html)) !== null) {
+                console.log('[Multi-Embed] Found source:', sourceMatch[1]);
+                const ext = sourceMatch[1].split('.').pop().toLowerCase();
+                if (ext === 'm3u8' || ext === 'mp4') {
+                    return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: sourceMatch[1] };
+                }
+            }
+
+            // Pattern 6: Check for common player configurations (JSON in script tags)
+            const configPatterns = [
+                /file["']\s*:\s*["']([^"']+)["']/i,
+                /url["']\s*:\s*["']([^"']+)["']/i,
+                /src["']\s*:\s*["']([^"']+)["']/i
+            ];
+
+            for (const pattern of configPatterns) {
+                const configMatch = html.match(pattern);
+                if (configMatch && configMatch[1]) {
+                    const streamUrl = configMatch[1].replace(/\\/g, '');
+                    const ext = streamUrl.split('.').pop().toLowerCase();
+                    if (ext === 'm3u8' || ext === 'mp4') {
+                        console.log('[Multi-Embed] Found config URL:', streamUrl);
+                        return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: streamUrl };
+                    }
+                }
+            }
+
+            console.log('[Multi-Embed] No direct stream found in iframe');
+            return null;
+
+        } catch (error) {
+            console.error('[Multi-Embed] Error extracting stream:', error.message);
+            return null;
+        }
+    }
+
+    // --- 3. ALTERNATIVE: USE MULTIEMBED API FOR DIRECT LINKS ---
+    async function getDirectStreamFromMultiEmbed(tmdbId, isSeries, season, episode) {
+        try {
+            let apiUrl;
+            if (isSeries) {
+                apiUrl = `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`;
+            } else {
+                apiUrl = `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1`;
+            }
+
+            const response = await fetch(apiUrl, {
+                method: 'GET',
+                mode: 'cors',
+                redirect: 'follow'
+            });
+
+            if (!response.ok) throw new Error('Failed to fetch from MultiEmbed');
+
+            // Check if response is JSON
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                const data = await response.json();
+                if (data.url) {
+                    const ext = data.url.split('.').pop().toLowerCase();
+                    if (ext === 'm3u8' || ext === 'mp4') {
+                        console.log('[Multi-Embed] Got direct link from API:', data.url);
+                        return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: data.url };
+                    }
+                }
+            }
+
+            // If redirect, check final URL
+            const finalUrl = response.url;
+            if (finalUrl !== apiUrl) {
+                const ext = finalUrl.split('.').pop().toLowerCase();
+                if (ext === 'm3u8' || ext === 'mp4') {
+                    console.log('[Multi-Embed] Redirected to direct link:', finalUrl);
+                    return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: finalUrl };
+                }
+            }
+
+            return null;
+        } catch (error) {
+            console.error('[Multi-Embed] Error getting direct stream:', error.message);
+            return null;
+        }
+    }
+
+    // --- 4. SOURCE TESTING FUNCTION ---
     async function testSource(source) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
@@ -168,7 +312,7 @@
         }
     }
 
-    // --- 3. LAMPA UI COMPONENT ---
+    // --- 5. LAMPA UI COMPONENT ---
     function MultiEmbedComponent(object) {
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
@@ -185,6 +329,44 @@
 
         this.render = function () { return files.render(); };
 
+        // Helper function to scroll to a specific item index
+        function scrollToItem(index) {
+            if (!items[index]) return;
+            
+            var item = items[index][0]; // Get DOM element from jQuery
+            var scrollBody = scroll.body(true); // Get DOM element
+            var scrollHtml = scroll.render(true); // Get main HTML element
+            
+            if (item && scrollBody) {
+                var itemTop = item.offsetTop;
+                var itemHeight = item.offsetHeight;
+                var scrollHeight = scrollHtml.clientHeight;
+                var currentScroll = -scroll.position();
+                
+                // Calculate target scroll position to center the item
+                var targetScroll = itemTop - (scrollHeight / 2) + (itemHeight / 2);
+                
+                // Ensure we don't scroll past boundaries
+                var maxScroll = scrollBody.scrollHeight - scrollHeight;
+                targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+                
+                // Animate scroll using wheel method
+                var step = (targetScroll - currentScroll) / 20;
+                var steps = 20;
+                var currentStep = 0;
+                
+                var scrollInterval = setInterval(function() {
+                    currentStep++;
+                    if (currentStep >= steps) {
+                        clearInterval(scrollInterval);
+                        scroll.wheel(targetScroll - currentScroll);
+                    } else {
+                        scroll.wheel(step);
+                    }
+                }, 16); // ~60fps
+            }
+        }
+
         this.start = function () {
             if (Lampa.Activity.active().activity !== this.activity) return;
             Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
@@ -198,7 +380,7 @@
                     if (selectedIndex > 0) {
                         selectedIndex--;
                         updateFocus();
-                        scroll.scrollToIndex(selectedIndex);
+                        scrollToItem(selectedIndex);
                     } else {
                         Lampa.Controller.toggle('head');
                     }
@@ -207,7 +389,7 @@
                     if (selectedIndex < items.length - 1) {
                         selectedIndex++;
                         updateFocus();
-                        scroll.scrollToIndex(selectedIndex);
+                        scrollToItem(selectedIndex);
                     }
                 },
                 left: function () { Lampa.Controller.toggle('menu'); },
@@ -240,23 +422,61 @@
         }
 
         async function testAndPlay(sourceData) {
-            Lampa.Notifier.show({ title: 'Testing Source', text: 'Checking availability...' });
+            Lampa.Notifier.show({ title: 'Testing Source', text: 'Checking availability and extracting stream...' });
             
             const result = await testSource(sourceData);
             
             if (result.working) {
                 Lampa.Notifier.show({ 
                     title: 'Source Working', 
-                    text: sourceData.name + ' is available',
+                    text: sourceData.name + ' is available. Extracting stream...',
                     time: 2000
                 });
                 
-                // Play the source
-                Lampa.Player.play({
-                    url: sourceData.url,
-                    title: object.movie.title || object.movie.name,
-                    iframe: true
-                });
+                // Try to extract direct stream (m3u8/mp4) from iframe
+                let streamInfo = null;
+                
+                // For MultiEmbed, try the direct API first
+                if (sourceData.name === 'MultiEmbed') {
+                    const tmdbId = object.movie.id;
+                    const isSeries = !!(object.movie.name && object.movie.first_air_date);
+                    const season = object.movie.season_number || object.movie.season || 1;
+                    const episode = object.movie.episode_number || object.movie.episode || 1;
+                    streamInfo = await getDirectStreamFromMultiEmbed(tmdbId, isSeries, season, episode);
+                }
+                
+                // If MultiEmbed didn't work or it's another source, try iframe extraction
+                if (!streamInfo && sourceData.type !== 'mixed') {
+                    streamInfo = await extractStreamFromIframe(sourceData.url);
+                }
+                
+                // If we found a direct stream, play it directly
+                if (streamInfo && streamInfo.url) {
+                    Lampa.Notifier.show({ 
+                        title: 'Stream Found', 
+                        text: 'Playing ' + streamInfo.type.toUpperCase() + ' stream directly',
+                        time: 2000
+                    });
+                    
+                    Lampa.Player.play({
+                        url: streamInfo.url,
+                        title: object.movie.title || object.movie.name,
+                        quality: streamInfo.type === 'hls' ? 'auto' : undefined
+                    });
+                } else {
+                    // Fallback to iframe if no direct stream found
+                    Lampa.Notifier.show({ 
+                        title: 'Using Iframe', 
+                        text: 'Direct stream not found, using iframe player',
+                        time: 2000
+                    });
+                    
+                    Lampa.Player.play({
+                        url: sourceData.url,
+                        title: object.movie.title || object.movie.name,
+                        iframe: true
+                    });
+                }
             } else {
                 Lampa.Notifier.show({ 
                     title: 'Source Failed', 
