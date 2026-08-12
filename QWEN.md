@@ -117,3 +117,7 @@ Some sources like **MultiEmbed.mov** may return direct HLS (.m3u8) or MP4 links 
 ## License
 
 This plugin is provided as-is for educational purposes. Ensure compliance with your local laws and terms of service when accessing streaming content.
+
+## Direct Stream Update
+
+The plugin no longer falls back to iframe playback for selected sources. The source picker now resolves a direct stream via `getDirectStreamUrl(source, movie)` and only calls `Lampa.Player.play` with extracted `.m3u8`, `.mp4`, or `.mpd` URLs. When no direct media URL is found, the UI displays a "No direct stream" notification because iframe embeds are not usable by the target Lampa players.
