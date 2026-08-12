@@ -65,6 +65,35 @@
         return null;
     }
 
+
+    function notify(title, text, time) {
+        const message = [title, text].filter(Boolean).join(': ');
+        if (Lampa.Notifier && Lampa.Notifier.show) {
+            Lampa.Notifier.show({ title: title, text: text || '', time: time || 3000 });
+        } else if (Lampa.Noty && Lampa.Noty.show) {
+            Lampa.Noty.show(message);
+        } else {
+            console.log('[Multi-Embed] ' + message);
+        }
+    }
+
+    function errorMessage(error) {
+        if (!error) return 'Unknown error';
+        return error.message || String(error);
+    }
+
+    function openPlayer(streamInfo, sourceData, movie) {
+        const entry = {
+            url: streamInfo.url,
+            title: movie.title || movie.name || sourceData.name,
+            quality: streamInfo.type === 'hls' ? 'auto' : undefined
+        };
+
+        console.log('[Multi-Embed] Playing source:', sourceData.name, entry);
+        Lampa.Player.play(entry);
+        if (Lampa.Player.playlist) Lampa.Player.playlist([entry]);
+    }
+
     function streamFromUrl(url, baseUrl) {
         const normalizedUrl = normalizeStreamUrl(url, baseUrl);
         const type = classifyStreamUrl(normalizedUrl);
@@ -267,19 +296,37 @@
             });
         }
 
-        async function testAndPlay(sourceData) {
-            Lampa.Notifier.show({ title: 'Testing', text: 'Extracting direct stream...' });
-            const streamInfo = await getDirectStreamUrl(sourceData, object.movie);
+        var isPlayingSource = false;
 
-            if (streamInfo && streamInfo.url) {
-                Lampa.Notifier.show({ title: 'Playing', text: streamInfo.type.toUpperCase() + ' stream', time: 2000 });
-                Lampa.Player.play({
-                    url: streamInfo.url,
-                    title: object.movie.title || object.movie.name,
-                    quality: streamInfo.type === 'hls' ? 'auto' : undefined
-                });
-            } else {
-                Lampa.Notifier.show({ title: 'No direct stream', text: 'Iframe playback is disabled for Lampa players', time: 3000 });
+        function playSelected() {
+            if (!sourceItems[selectedIndex]) {
+                notify('No source', 'Choose a stream source first', 2000);
+                return;
+            }
+
+            if (isPlayingSource) return;
+
+            isPlayingSource = true;
+            testAndPlay(sourceItems[selectedIndex]).finally(function() {
+                isPlayingSource = false;
+            });
+        }
+
+        async function testAndPlay(sourceData) {
+            try {
+                notify('Testing ' + sourceData.name, 'Extracting direct stream...', 2000);
+                const streamInfo = await getDirectStreamUrl(sourceData, object.movie);
+
+                if (streamInfo && streamInfo.url) {
+                    notify('Playing', sourceData.name + ' ' + streamInfo.type.toUpperCase() + ' stream', 2000);
+                    openPlayer(streamInfo, sourceData, object.movie);
+                } else {
+                    notify('No direct stream', sourceData.name + ' did not expose a playable media link', 5000);
+                    console.warn('[Multi-Embed] No playable media URL found for source:', sourceData);
+                }
+            } catch (error) {
+                console.error('[Multi-Embed] Playback error for ' + sourceData.name + ':', error);
+                notify('Playback error', sourceData.name + ': ' + errorMessage(error), 7000);
             }
         }
 
@@ -300,7 +347,7 @@
                     '</div>');
 
                 item.on('hover:focus', function() { selectedIndex = index; updateFocus(); scrollToItem(selectedIndex); });
-                item.on('hover:click', function() { selectedIndex = index; updateFocus(); playSelected(); });
+                item.on('hover:enter hover:click click', function() { selectedIndex = index; updateFocus(); playSelected(); });
                 html.append(item);
                 items.push(item);
                 sourceItems.push(source);
