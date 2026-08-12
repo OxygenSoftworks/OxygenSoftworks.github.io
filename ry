@@ -523,13 +523,64 @@
     }
 
     function openMultiEmbed(movie) {
-        Lampa.Activity.push({
-            url: '',
-            title: 'Direct Streams',
-            component: 'multi_embed_component',
-            movie: movie,
-            page: 1
+        // Fully automatic - skip UI and play best source immediately
+        Lampa.Notifier.show({ title: '⚡ Auto-Play', text: 'Finding best source...', time: 2000 });
+        
+        const sources = getSources(movie);
+        if (sources.length === 0) {
+            Lampa.Notifier.show({ title: 'Error', text: 'No sources available', time: 3000 });
+            return;
+        }
+        
+        // Test all sources in parallel and play the best one
+        testAndPlayBest(sources, movie);
+    }
+    
+    async function testAndPlayBest(sources, movie) {
+        var bestStream = null;
+        var bestScore = -1;
+        
+        // Test all sources concurrently
+        var testPromises = sources.map(async function(source) {
+            try {
+                const streamInfo = await getDirectStreamUrl(source, movie);
+                if (streamInfo && streamInfo.url) {
+                    var qualityScore = getQualityScore(streamInfo.type, streamInfo.url);
+                    return { source: source, stream: streamInfo, score: qualityScore };
+                }
+                return null;
+            } catch (e) {
+                console.log('[Multi-Embed] Source failed:', source.name, e.message);
+                return null;
+            }
         });
+        
+        var results = await Promise.allSettled(testPromises);
+        var workingSources = results
+            .filter(function(r) { return r.status === 'fulfilled' && r.value !== null; })
+            .map(function(r) { return r.value; });
+        
+        if (workingSources.length > 0) {
+            // Sort by score descending
+            workingSources.sort(function(a, b) { return b.score - a.score; });
+            bestStream = workingSources[0];
+        }
+        
+        if (bestStream) {
+            console.log('[Multi-Embed] Playing best source:', bestStream.source.name, 'Score:', bestStream.score);
+            Lampa.Notifier.show({ 
+                title: 'Playing', 
+                text: bestStream.source.name + ' - ' + bestStream.stream.type.toUpperCase() + ' stream', 
+                time: 2000 
+            });
+            Lampa.Player.play({
+                url: bestStream.stream.url,
+                title: movie.title || movie.name,
+                quality: bestStream.stream.type === 'hls' ? 'auto' : undefined
+            });
+        } else {
+            Lampa.Notifier.show({ title: 'Error', text: 'No working streams found', time: 3000 });
+        }
     }
 
     Lampa.Listener.follow('full', function(e) {
