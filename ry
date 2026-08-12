@@ -7,9 +7,13 @@
     const CORS_PROXIES = [
         'https://api.allorigins.win/raw?url=',
         'https://corsproxy.io/?',
-        'https://thingproxy.freeboard.io/fetch/'
+        'https://thingproxy.freeboard.io/fetch/',
+        'https://cors.bridged.cc/',
+        'https://proxy.zupeez.workers.dev/?',
+        'https://isomorphic-git.org/downloads/cors-proxy/?',
+        'https://codetabs.com/cors-proxy/cors-proxy.php?proxy='
     ];
-
+    
     async function fetchWithProxy(url) {
         for (const proxy of CORS_PROXIES) {
             try {
@@ -17,11 +21,18 @@
                     method: 'GET',
                     headers: {
                         'Accept': 'text/html,application/xhtml+xml,application/json,text/plain,*/*',
-                        'User-Agent': 'Mozilla/5.0'
-                    }
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Referer': url,
+                        'Origin': new URL(proxy).origin
+                    },
+                    redirect: 'follow'
                 });
-                if (response.ok) return await response.text();
+                if (response.ok) {
+                    const text = await response.text();
+                    if (text && text.length > 100) return text;
+                }
             } catch (e) {
+                console.log('[Multi-Embed] Proxy failed:', proxy.substring(0, 30));
                 continue;
             }
         }
@@ -123,7 +134,7 @@
         if (!payload) return null;
 
         if (typeof payload === 'object') {
-            const keys = ['url', 'file', 'src', 'link', 'stream', 'hls', 'playlist'];
+            const keys = ['url', 'file', 'src', 'link', 'stream', 'hls', 'playlist', 'sources'];
             for (const key of keys) {
                 if (payload[key]) {
                     const streamInfo = parseDirectStreamPayload(payload[key], baseUrl);
@@ -140,26 +151,49 @@
         }
 
         const text = String(payload);
+        
+        // First try direct URL extraction
         const directUrl = streamFromUrl(text, baseUrl);
         if (directUrl) return directUrl;
 
+        // Try JSON parsing
         try {
-            return parseDirectStreamPayload(JSON.parse(text), baseUrl);
+            const json = JSON.parse(text);
+            return parseDirectStreamPayload(json, baseUrl);
         } catch (e) {}
 
+        // Enhanced regex patterns for various embed formats
         const patterns = [
-            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|mpd|ts)[^"'\s<>]*/gi,
-            /(?:file|url|src|link|hls|playlist)["']?\s*[:=]\s*["']([^"']+)["']/gi,
+            // Direct media URLs with more extensions
+            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|mpd|ts|m4s)[^"'\s<>]*/gi,
+            // Common player config patterns
+            /(?:file|url|src|link|hls|playlist|data-url)["']?\s*[:=]\s*["']([^"']+)["']/gi,
+            /(?:file|url|src|link|hls|playlist)["']?\s*[:=]\s*["']?([^"'\s}]+)["']?/gi,
+            // HTML5 video/audio sources
             /<source[^>]+src=["']([^"']+)["'][^>]*>/gi,
-            /<video[^>]+src=["']([^"']+)["'][^>]*>/gi
+            /<video[^>]+src=["']([^"']+)["'][^>]*>/gi,
+            /<audio[^>]+src=["']([^"']+)["'][^>]*>/gi,
+            // JWPlayer/Video.js configs
+            /setup\(\{[^}]*file:\s*["']([^"']+)["']/gi,
+            /player\.setup\(\{[^}]*sources:\s*\[\{[^}]*file:\s*["']([^"']+)["']/gi,
+            // HLS.js and other players
+            /loadSource\(["']([^"']+)["']\)/gi,
+            // General URL patterns with query params
+            /https?:\/\/[^\s"']+\/(?:hls|stream|video|playlist)[^\s"']*\.(?:m3u8|mp4|mpd|ts)[^\s"']*/gi
         ];
 
         for (const pattern of patterns) {
             let match;
-            while ((match = pattern.exec(text)) !== null) {
+            const regex = new RegExp(pattern.source, pattern.flags);
+            while ((match = regex.exec(text)) !== null) {
                 const candidate = match[1] || match[0];
-                const streamInfo = streamFromUrl(candidate, baseUrl);
-                if (streamInfo) return streamInfo;
+                if (candidate && typeof candidate === 'string') {
+                    const streamInfo = streamFromUrl(candidate.trim(), baseUrl);
+                    if (streamInfo) {
+                        console.log('[Multi-Embed] Found stream via pattern');
+                        return streamInfo;
+                    }
+                }
             }
         }
 
@@ -309,10 +343,19 @@
     // --- 2. DIRECT STREAM EXTRACTION FROM EMBEDS ---
     async function extractStreamFromIframe(iframeUrl) {
         try {
+            console.log('[Multi-Embed] Extracting from:', iframeUrl);
             const html = await fetchWithProxy(iframeUrl);
+            if (!html || html.length < 100) {
+                console.log('[Multi-Embed] Response too short, trying alternate method');
+                return null;
+            }
             const streamInfo = parseDirectStreamPayload(html, iframeUrl);
-            if (streamInfo) console.log('[Multi-Embed] Found direct stream:', streamInfo.type, streamInfo.url);
-            return streamInfo;
+            if (streamInfo) {
+                console.log('[Multi-Embed] Found direct stream:', streamInfo.type, streamInfo.url.substring(0, 80));
+                return streamInfo;
+            }
+            console.log('[Multi-Embed] No stream found in page content');
+            return null;
         } catch (error) {
             console.error('[Multi-Embed] Extract error:', error.message);
             return null;
@@ -552,14 +595,25 @@
         var bestStream = null;
         var bestScore = -1;
         
-        // Test all sources concurrently
+        console.log('[Multi-Embed] Testing', sources.length, 'sources for:', movie.title || movie.name);
+        
+        // Test all sources concurrently with timeout
         var testPromises = sources.map(async function(source) {
             try {
-                const streamInfo = await getDirectStreamUrl(source, movie);
+                // Set a timeout for each source test
+                const timeoutPromise = new Promise(function(resolve, reject) {
+                    setTimeout(function() { reject(new Error('Timeout')); }, 8000);
+                });
+                
+                const streamPromise = getDirectStreamUrl(source, movie);
+                const streamInfo = await Promise.race([streamPromise, timeoutPromise]);
+                
                 if (streamInfo && streamInfo.url) {
                     var qualityScore = getQualityScore(streamInfo.type, streamInfo.url);
+                    console.log('[Multi-Embed] Source working:', source.name, 'Type:', streamInfo.type, 'Score:', qualityScore);
                     return { source: source, stream: streamInfo, score: qualityScore };
                 }
+                console.log('[Multi-Embed] Source failed:', source.name, 'No stream');
                 return null;
             } catch (e) {
                 console.log('[Multi-Embed] Source failed:', source.name, e.message);
@@ -571,6 +625,8 @@
         var workingSources = results
             .filter(function(r) { return r.status === 'fulfilled' && r.value !== null; })
             .map(function(r) { return r.value; });
+        
+        console.log('[Multi-Embed] Found', workingSources.length, 'working sources');
         
         if (workingSources.length > 0) {
             // Sort by score descending
@@ -595,7 +651,8 @@
                 notify('Error', 'Failed to play: ' + e.message, 3000);
             }
         } else {
-            notify('Error', 'No working streams found', 3000);
+            console.error('[Multi-Embed] No working streams found. Check console for details.');
+            notify('Error', 'No working streams found - check console logs', 4000);
         }
     }
 
