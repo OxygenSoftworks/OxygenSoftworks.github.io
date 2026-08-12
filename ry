@@ -3,7 +3,7 @@
     if (window.MultiEmbedPlugin) return;
     window.MultiEmbedPlugin = true;
 
-    // --- CORS PROXY FOR IFRAME FETCHING ---
+    // --- CORS PROXY FOR EMBED PAGE FETCHING ---
     const CORS_PROXIES = [
         'https://api.allorigins.win/raw?url=',
         'https://corsproxy.io/?',
@@ -144,24 +144,24 @@
 
         if (isSeries) {
             sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`, type: 'mixed', priority: 1 });
-            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 2 });
-            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 3 });
-            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 4 });
-            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`, type: 'iframe', priority: 5 });
-            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}`, type: 'iframe', priority: 6 });
-            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 7 });
-            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 8 });
-            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}`, type: 'iframe', priority: 9 });
+            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 2 });
+            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 3 });
+            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 4 });
+            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`, type: 'embed', priority: 5 });
+            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}`, type: 'embed', priority: 6 });
+            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 7 });
+            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 8 });
+            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}`, type: 'embed', priority: 9 });
         } else {
             sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`, type: 'mixed', priority: 1 });
-            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/movie/${tmdbId}`, type: 'iframe', priority: 2 });
-            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/movie/${tmdbId}`, type: 'iframe', priority: 3 });
-            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/movie/${tmdbId}`, type: 'iframe', priority: 4 });
-            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/movie/tmdb/${tmdbId}`, type: 'iframe', priority: 5 });
-            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}`, type: 'iframe', priority: 6 });
-            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/movie/${tmdbId}`, type: 'iframe', priority: 7 });
-            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/movie/${tmdbId}`, type: 'iframe', priority: 8 });
-            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/movie/${tmdbId}`, type: 'iframe', priority: 9 });
+            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/movie/${tmdbId}`, type: 'embed', priority: 2 });
+            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/movie/${tmdbId}`, type: 'embed', priority: 3 });
+            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/movie/${tmdbId}`, type: 'embed', priority: 4 });
+            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/movie/tmdb/${tmdbId}`, type: 'embed', priority: 5 });
+            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}`, type: 'embed', priority: 6 });
+            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/movie/${tmdbId}`, type: 'embed', priority: 7 });
+            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/movie/${tmdbId}`, type: 'embed', priority: 8 });
+            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/movie/${tmdbId}`, type: 'embed', priority: 9 });
         }
 
         sources.sort((a, b) => a.priority - b.priority);
@@ -201,27 +201,14 @@
         }
     }
 
-    // --- 4. SOURCE TESTING ---
-    async function testSource(source) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-        try {
-            await fetch(source.url, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
-            clearTimeout(timeout);
-            return { working: true };
-        } catch (error) {
-            clearTimeout(timeout);
-            return { working: false, error: error.message };
-        }
-    }
-
-    // --- 5. LAMPA UI COMPONENT ---
+    // --- 4. LAMPA UI COMPONENT ---
     function MultiEmbedComponent(object) {
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
         var html = $('<div></div>');
         var selectedIndex = 0;
         var items = [];
+        var sourceItems = [];
 
         this.create = function() {
             scroll.minus();
@@ -238,25 +225,15 @@
             if (!itemEl || !container) return;
 
             var itemTop = itemEl.offsetTop;
-            var itemHeight = itemEl.offsetHeight;
-            var containerHeight = container.clientHeight;
-            var currentScroll = container.scrollTop;
-            var targetScroll = itemTop - (containerHeight / 2) + (itemHeight / 2);
-            var maxScroll = container.scrollHeight - containerHeight;
-            targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+            var itemBottom = itemTop + itemEl.offsetHeight;
+            var visibleTop = container.scrollTop;
+            var visibleBottom = visibleTop + container.clientHeight;
 
-            var distance = targetScroll - currentScroll;
-            var duration = 300;
-            var start = null;
-
-            function step(timestamp) {
-                if (!start) start = timestamp;
-                var progress = Math.min((timestamp - start) / duration, 1);
-                var ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
-                container.scrollTop = currentScroll + (distance * ease);
-                if (progress < 1) requestAnimationFrame(step);
+            if (itemTop < visibleTop) {
+                container.scrollTop = itemTop;
+            } else if (itemBottom > visibleBottom) {
+                container.scrollTop = itemBottom - container.clientHeight;
             }
-            requestAnimationFrame(step);
         }
 
         this.start = function() {
@@ -276,16 +253,16 @@
                     if (selectedIndex < items.length - 1) { selectedIndex++; updateFocus(); scrollToItem(selectedIndex); }
                 },
                 left: function() { Lampa.Controller.toggle('menu'); },
-                right: function() { if (items[selectedIndex]) testAndPlay(items[selectedIndex]); },
-                ok: function() { if (items[selectedIndex]) testAndPlay(items[selectedIndex]); },
+                right: function() { playSelected(); },
+                ok: function() { playSelected(); },
                 back: this.back
             });
-            Lampa.Controller.toggle('content');
             this.buildList();
+            Lampa.Controller.toggle('content');
         };
 
         function updateFocus() {
-            items.forEach((item, idx) => {
+            items.forEach(function(item, idx) {
                 idx === selectedIndex ? item.addClass('focus') : item.removeClass('focus');
             });
         }
@@ -307,23 +284,26 @@
         }
 
         this.back = function() { Lampa.Activity.backward(); };
-        this.destroy = function() { scroll.destroy(); files.destroy(); html.remove(); items = []; };
+        this.destroy = function() { scroll.destroy(); files.destroy(); html.remove(); items = []; sourceItems = []; };
 
         this.buildList = function() {
             html.empty();
             items = [];
+            sourceItems = [];
             var sources = getSources(object.movie);
             selectedIndex = 0;
 
             sources.forEach(function(source, index) {
                 var item = $('<div class="online selector" style="padding:1em;margin-bottom:0.5em;background:rgba(255,255,255,0.05);border-radius:0.3em;">' +
                     '<div class="online__title" style="font-size:1.2em;font-weight:bold;">' + source.name + '</div>' +
-                    '<div class="online__quality" style="opacity:0.7;">' + (source.type === 'mixed' ? 'Direct HLS/m3u8' : 'Iframe') + ' | Press OK</div>' +
+                    '<div class="online__quality" style="opacity:0.7;">' + (source.type === 'mixed' ? 'Direct endpoint' : 'Resolver scan') + ' | Press OK</div>' +
                     '</div>');
 
-                item.on('hover:enter', function() { selectedIndex = index; updateFocus(); testAndPlay(source); });
+                item.on('hover:focus', function() { selectedIndex = index; updateFocus(); scrollToItem(selectedIndex); });
+                item.on('hover:click', function() { selectedIndex = index; updateFocus(); playSelected(); });
                 html.append(item);
                 items.push(item);
+                sourceItems.push(source);
             });
 
             scroll.append(html);

@@ -83,12 +83,12 @@ Lampa.Listener.follow('full', function(e) {
 ## Stream Extraction Techniques
 
 ### Why Extract Streams?
-Many embed sources use iframes which are not supported on all TV platforms. Extracting direct .m3u8 (HLS) or .mp4 links allows native playback in Lampa.Player.
+Many providers expose embed pages that are not supported by the target Lampa players. Extracting direct `.m3u8` (HLS), `.mp4`, or `.mpd` links allows native playback in `Lampa.Player`.
 
-### Method 1: Fetch Iframe HTML and Parse
+### Method 1: Fetch Provider HTML and Parse
 ```javascript
-async function extractStreamFromIframe(iframeUrl) {
-    const html = await fetchWithProxy(iframeUrl);
+async function extractStreamFromEmbed(embedUrl) {
+    const html = await fetchWithProxy(embedUrl);
     
     // Find m3u8 URLs
     const m3u8Pattern = /https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/gi;
@@ -187,7 +187,7 @@ async function massSearch(sources) {
     const results = [];
     const promises = sources.map(async (source) => {
         try {
-            const streamInfo = await extractStreamFromIframe(source.url);
+            const streamInfo = await extractStreamFromEmbed(source.url);
             if (streamInfo) {
                 results.push({
                     name: source.name,
@@ -260,7 +260,7 @@ const results = await Promise.allSettled(
 ## CORS Proxy Solutions
 
 ### Why Proxies Are Needed
-Browser security (CORS) prevents fetching cross-origin iframe content directly. Proxies bypass this.
+Browser security (CORS) prevents fetching cross-origin provider pages directly. Proxies can expose the page text for direct-media scanning.
 
 ### Recommended Proxies
 ```javascript
@@ -313,13 +313,13 @@ Lampa.Player.play({
 });
 ```
 
-### Iframe Fallback
-When direct stream extraction fails:
+### Extraction Failure Handling
+When direct stream extraction fails, do not play the embed URL. Notify the user and let them choose another provider:
 ```javascript
-Lampa.Player.play({
-    url: 'https://embed.source.com/embed/movie/123',
-    title: 'Movie Title',
-    iframe: true
+Lampa.Notifier.show({
+    title: 'No direct stream',
+    text: 'Only direct media URLs are supported',
+    time: 3000
 });
 ```
 
@@ -445,9 +445,9 @@ async function testSource(source) {
 
 ## Best Practices
 
-1. **Always try direct stream extraction first** - iframes don't work on all TV platforms
+1. **Always extract a direct stream before playback** - embed players do not work on the target TV platforms
 2. **Use multiple CORS proxies** - some may be blocked or rate-limited
-3. **Implement fallback mechanisms** - if extraction fails, fall back to iframe
+3. **Implement fallback mechanisms** - if extraction fails, try another provider rather than an embed-page fallback
 4. **Provide user feedback** - use Lampa.Notifier to show what's happening
 5. **Handle errors gracefully** - don't crash the plugin on single source failures
 6. **Prioritize sources** - try the most reliable sources first
@@ -470,8 +470,8 @@ async function testSource(source) {
     }
 
     // 2. Stream extraction
-    async function extractStreamFromIframe(url) {
-        // Fetch and parse iframe
+    async function extractStreamFromEmbed(url) {
+        // Fetch and parse provider page
     }
 
     // 3. Test sources
