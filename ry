@@ -62,7 +62,22 @@
         if (/\.m3u8$/.test(cleanUrl)) return 'hls';
         if (/\.mp4$/.test(cleanUrl)) return 'mp4';
         if (/\.mpd$/.test(cleanUrl)) return 'dash';
+        if (/\.ts$/.test(cleanUrl)) return 'ts';
         return null;
+    }
+
+    function getQualityScore(type, url) {
+        let score = 0;
+        if (type === 'hls') score += 100;
+        if (type === 'mp4') score += 80;
+        if (type === 'dash') score += 70;
+        if (type === 'ts') score += 50;
+        if (/master|playlist|index/.test(url.toLowerCase())) score += 20;
+        if (/360|480|low/.test(url.toLowerCase())) score -= 30;
+        if (/720|hd/.test(url.toLowerCase())) score += 10;
+        if (/1080|fhd/.test(url.toLowerCase())) score += 20;
+        if (/4k|uhd/.test(url.toLowerCase())) score += 30;
+        return score;
     }
 
 
@@ -129,7 +144,7 @@
         } catch (e) {}
 
         const patterns = [
-            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|mpd)[^"'\s<>]*/gi,
+            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|mpd|ts)[^"'\s<>]*/gi,
             /(?:file|url|src|link|hls|playlist)["']?\s*[:=]\s*["']([^"']+)["']/gi,
             /<source[^>]+src=["']([^"']+)["'][^>]*>/gi,
             /<video[^>]+src=["']([^"']+)["'][^>]*>/gi
@@ -152,15 +167,105 @@
         const season = movie.season_number || movie.season || 1;
         const episode = movie.episode_number || movie.episode || 1;
 
+        // Source-specific URL formatting for proper endpoint selection
+        const formattedUrl = formatSourceUrl(source, movie, isSeries, season, episode);
+
         if (source.name === 'MultiEmbed') {
             const direct = await getDirectStreamFromMultiEmbed(movie.id, isSeries, season, episode);
             if (direct) return direct;
         }
 
-        const fromUrl = streamFromUrl(source.url, source.url);
+        const fromUrl = streamFromUrl(formattedUrl, formattedUrl);
         if (fromUrl) return fromUrl;
 
-        return await extractStreamFromIframe(source.url);
+        return await extractStreamFromIframe(formattedUrl);
+    }
+
+    function formatSourceUrl(source, movie, isSeries, season, episode) {
+        const tmdbId = movie.id;
+        
+        // AutoEmbed - uses TMDB ID with specific format for movies vs TV
+        if (source.name === 'AutoEmbed') {
+            if (isSeries) {
+                return `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`;
+            } else {
+                return `https://autoembed.co/movie/tmdb/${tmdbId}`;
+            }
+        }
+        
+        // MultiEmbed - separate endpoints for movies/series
+        if (source.name === 'MultiEmbed') {
+            if (isSeries) {
+                return `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`;
+            } else {
+                return `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`;
+            }
+        }
+        
+        // VidSrc.to - distinct paths for movies and TV
+        if (source.name === 'VidSrc.to') {
+            if (isSeries) {
+                return `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`;
+            } else {
+                return `https://vidsrc.to/embed/movie/${tmdbId}`;
+            }
+        }
+        
+        // VidSrc.xyz - distinct paths for movies and TV
+        if (source.name === 'VidSrc.xyz') {
+            if (isSeries) {
+                return `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}`;
+            } else {
+                return `https://vidsrc.xyz/embed/movie/${tmdbId}`;
+            }
+        }
+        
+        // Embed.su - distinct paths for movies and TV
+        if (source.name === 'Embed.su') {
+            if (isSeries) {
+                return `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`;
+            } else {
+                return `https://embed.su/embed/movie/${tmdbId}`;
+            }
+        }
+        
+        // 2Embed - uses query params with type distinction
+        if (source.name === '2Embed') {
+            if (isSeries) {
+                return `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}`;
+            } else {
+                return `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}`;
+            }
+        }
+        
+        // SmashyStream - path-based distinction
+        if (source.name === 'SmashyStream') {
+            if (isSeries) {
+                return `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}`;
+            } else {
+                return `https://embed.smashy.stream/movie/${tmdbId}`;
+            }
+        }
+        
+        // SuperEmbed - path-based distinction
+        if (source.name === 'SuperEmbed') {
+            if (isSeries) {
+                return `https://superembed.stream/tv/${tmdbId}/${season}/${episode}`;
+            } else {
+                return `https://superembed.stream/movie/${tmdbId}`;
+            }
+        }
+        
+        // MoviesAPI - hyphenated format
+        if (source.name === 'MoviesAPI') {
+            if (isSeries) {
+                return `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}`;
+            } else {
+                return `https://moviesapi.club/movie/${tmdbId}`;
+            }
+        }
+        
+        return source.url;
     }
 
     // --- 1. SOURCES CONFIGURATION ---
@@ -287,6 +392,8 @@
                 back: this.back
             });
             this.buildList();
+            // Auto-select best source on load
+            this.autoSelectBestSource();
             Lampa.Controller.toggle('content');
         };
 
@@ -330,6 +437,60 @@
 
         this.back = function() { Lampa.Activity.backward(); };
         this.destroy = function() { scroll.destroy(); files.destroy(); html.remove(); items = []; sourceItems = []; };
+
+        // Auto-select the best source based on quality score and speed test
+        this.autoSelectBestSource = async function() {
+            if (sourceItems.length === 0) return;
+            
+            Lampa.Notifier.show({ title: 'Auto-Select', text: 'Finding best source...', time: 2000 });
+            
+            var bestIndex = 0;
+            var bestScore = -1;
+            
+            // Test sources in parallel for speed, evaluate quality
+            var testPromises = sourceItems.map(async function(source, index) {
+                try {
+                    const streamInfo = await getDirectStreamUrl(source, object.movie);
+                    if (streamInfo && streamInfo.url) {
+                        // Calculate quality score
+                        var qualityScore = getQualityScore(streamInfo.type, streamInfo.url);
+                        // Higher score = better source
+                        if (qualityScore > bestScore) {
+                            bestScore = qualityScore;
+                            bestIndex = index;
+                        }
+                        return { index: index, success: true, score: qualityScore, type: streamInfo.type };
+                    }
+                    return { index: index, success: false };
+                } catch (e) {
+                    return { index: index, success: false, error: e.message };
+                }
+            });
+            
+            // Wait for all tests to complete
+            var results = await Promise.allSettled(testPromises);
+            
+            // Find best working source
+            var workingSources = results.filter(function(r) {
+                return r.status === 'fulfilled' && r.value && r.value.success;
+            }).map(function(r) { return r.value; });
+            
+            if (workingSources.length > 0) {
+                // Sort by score descending
+                workingSources.sort(function(a, b) { return b.score - a.score; });
+                bestIndex = workingSources[0].index;
+                console.log('[Multi-Embed] Auto-selected source:', sourceItems[bestIndex].name, 'with score', workingSources[0].score);
+            }
+            
+            selectedIndex = bestIndex;
+            updateFocus();
+            scrollToItem(selectedIndex);
+            
+            // Auto-play the best source after a short delay
+            setTimeout(function() {
+                playSelected();
+            }, 500);
+        };
 
         this.buildList = function() {
             html.empty();
