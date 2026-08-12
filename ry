@@ -3,7 +3,7 @@
     if (window.MultiEmbedPlugin) return;
     window.MultiEmbedPlugin = true;
 
-    // --- CORS PROXY FOR IFRAME FETCHING ---
+    // --- CORS PROXY FOR EMBED PAGE FETCHING ---
     const CORS_PROXIES = [
         'https://api.allorigins.win/raw?url=',
         'https://corsproxy.io/?',
@@ -16,8 +16,7 @@
                 const response = await fetch(proxy + encodeURIComponent(url), {
                     method: 'GET',
                     headers: {
-                        'Accept': 'text/html,application/xhtml+xml',
-                        'User-Agent': 'Mozilla/5.0'
+                        'Accept': 'text/html,application/xhtml+xml,application/json,text/plain,*/*'
                     }
                 });
                 if (response.ok) return await response.text();
@@ -26,6 +25,150 @@
             }
         }
         throw new Error('All proxies failed');
+    }
+
+    function decodeHtmlEntities(value) {
+        return String(value || '')
+            .replace(/&amp;/g, '&')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>');
+    }
+
+    function normalizeStreamUrl(url, baseUrl) {
+        if (!url) return null;
+
+        let cleanUrl = decodeHtmlEntities(url)
+            .replace(/\\\//g, '/')
+            .replace(/\u0026/g, '&')
+            .replace(/^['"]|['"]$/g, '')
+            .trim();
+
+        if (!cleanUrl || cleanUrl.indexOf('blob:') === 0 || cleanUrl.indexOf('data:') === 0) return null;
+
+        try {
+            cleanUrl = new URL(cleanUrl, baseUrl).href;
+        } catch (e) {
+            return null;
+        }
+
+        return cleanUrl;
+    }
+
+
+    function decodePotentialBase64(value) {
+        if (!value || typeof atob !== 'function') return null;
+        try {
+            const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+            return atob(normalized);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function collectDecodedPayloads(text) {
+        const payloads = [];
+        const encodedMatches = String(text).match(/[A-Za-z0-9+/=_-]{40,}/g) || [];
+        encodedMatches.slice(0, 50).forEach(function(match) {
+            const decoded = decodePotentialBase64(match);
+            if (decoded && decoded !== match) payloads.push(decoded);
+        });
+
+        try {
+            const decodedUri = decodeURIComponent(String(text));
+            if (decodedUri !== text) payloads.push(decodedUri);
+        } catch (e) {}
+
+        return payloads;
+    }
+
+    function classifyStreamUrl(url) {
+        const cleanUrl = (url || '').split('#')[0].split('?')[0].toLowerCase();
+        if (/\.m3u8$/.test(cleanUrl)) return 'hls';
+        if (/\.mp4$/.test(cleanUrl)) return 'mp4';
+        if (/\.mpd$/.test(cleanUrl)) return 'dash';
+        return null;
+    }
+
+    function streamFromUrl(url, baseUrl) {
+        const normalizedUrl = normalizeStreamUrl(url, baseUrl);
+        const type = classifyStreamUrl(normalizedUrl);
+        return type ? { type: type, url: normalizedUrl } : null;
+    }
+
+    function parseDirectStreamPayload(payload, baseUrl) {
+        if (!payload) return null;
+
+        if (typeof payload === 'object') {
+            const keys = ['url', 'file', 'src', 'link', 'stream', 'hls', 'playlist'];
+            for (const key of keys) {
+                if (payload[key]) {
+                    const streamInfo = parseDirectStreamPayload(payload[key], baseUrl);
+                    if (streamInfo) return streamInfo;
+                }
+            }
+            const arrayKeys = ['sources', 'tracks', 'streams', 'playlist'];
+            for (const arrayKey of arrayKeys) {
+                if (Array.isArray(payload[arrayKey])) {
+                    for (const source of payload[arrayKey]) {
+                        const streamInfo = parseDirectStreamPayload(source, baseUrl);
+                        if (streamInfo) return streamInfo;
+                    }
+                }
+            }
+            return null;
+        }
+
+        const text = String(payload);
+        const directUrl = streamFromUrl(text, baseUrl);
+        if (directUrl) return directUrl;
+
+        try {
+            return parseDirectStreamPayload(JSON.parse(text), baseUrl);
+        } catch (e) {}
+
+        const patterns = [
+            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|mpd)(?:\?[^"'\s<>]*)?/gi,
+            /(?:file|url|src|link|hls|playlist|manifest|dash)["']?\s*[:=]\s*["']([^"']+)["']/gi,
+            /<source[^>]+src=["']([^"']+)["'][^>]*>/gi,
+            /<video[^>]+src=["']([^"']+)["'][^>]*>/gi,
+            /source:\s*["']([^"']+)["']/gi,
+            /sources:\s*\[([^\]]+)\]/gi
+        ];
+
+        for (const pattern of patterns) {
+            let match;
+            while ((match = pattern.exec(text)) !== null) {
+                const candidate = match[1] || match[0];
+                const streamInfo = streamFromUrl(candidate, baseUrl);
+                if (streamInfo) return streamInfo;
+            }
+        }
+
+        const decodedPayloads = collectDecodedPayloads(text);
+        for (const decodedPayload of decodedPayloads) {
+            const streamInfo = parseDirectStreamPayload(decodedPayload, baseUrl);
+            if (streamInfo) return streamInfo;
+        }
+
+        return null;
+    }
+
+    async function getDirectStreamUrl(source, movie) {
+        const isSeries = !!(movie.name && movie.first_air_date);
+        const season = movie.season_number || movie.season || 1;
+        const episode = movie.episode_number || movie.episode || 1;
+
+        if (source.name === 'MultiEmbed') {
+            const direct = await getDirectStreamFromMultiEmbed(movie.id, isSeries, season, episode);
+            if (direct) return direct;
+        }
+
+        const fromUrl = streamFromUrl(source.url, source.url);
+        if (fromUrl) return fromUrl;
+
+        return await extractStreamFromEmbed(source.url);
     }
 
     // --- 1. SOURCES CONFIGURATION ---
@@ -38,90 +181,39 @@
 
         if (isSeries) {
             sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/directstream.php?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`, type: 'mixed', priority: 1 });
-            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 2 });
-            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 3 });
-            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 4 });
-            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`, type: 'iframe', priority: 5 });
-            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}`, type: 'iframe', priority: 6 });
-            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 7 });
-            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}`, type: 'iframe', priority: 8 });
-            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}`, type: 'iframe', priority: 9 });
+            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 2 });
+            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 3 });
+            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 4 });
+            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`, type: 'embed', priority: 5 });
+            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/tv?id=${tmdbId}&s=${season}&e=${episode}`, type: 'embed', priority: 6 });
+            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 7 });
+            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/tv/${tmdbId}/${season}/${episode}`, type: 'embed', priority: 8 });
+            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/tv/${tmdbId}-${season}-${episode}`, type: 'embed', priority: 9 });
         } else {
             sources.push({ name: 'MultiEmbed', url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`, type: 'mixed', priority: 1 });
-            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/movie/${tmdbId}`, type: 'iframe', priority: 2 });
-            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/movie/${tmdbId}`, type: 'iframe', priority: 3 });
-            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/movie/${tmdbId}`, type: 'iframe', priority: 4 });
-            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/movie/tmdb/${tmdbId}`, type: 'iframe', priority: 5 });
-            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}`, type: 'iframe', priority: 6 });
-            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/movie/${tmdbId}`, type: 'iframe', priority: 7 });
-            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/movie/${tmdbId}`, type: 'iframe', priority: 8 });
-            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/movie/${tmdbId}`, type: 'iframe', priority: 9 });
+            sources.push({ name: 'VidSrc.to', url: `https://vidsrc.to/embed/movie/${tmdbId}`, type: 'embed', priority: 2 });
+            sources.push({ name: 'VidSrc.xyz', url: `https://vidsrc.xyz/embed/movie/${tmdbId}`, type: 'embed', priority: 3 });
+            sources.push({ name: 'Embed.su', url: `https://embed.su/embed/movie/${tmdbId}`, type: 'embed', priority: 4 });
+            sources.push({ name: 'AutoEmbed', url: `https://autoembed.co/movie/tmdb/${tmdbId}`, type: 'embed', priority: 5 });
+            sources.push({ name: '2Embed', url: `https://www.2embed.to/embed/tmdb/movie?id=${tmdbId}`, type: 'embed', priority: 6 });
+            sources.push({ name: 'SmashyStream', url: `https://embed.smashy.stream/movie/${tmdbId}`, type: 'embed', priority: 7 });
+            sources.push({ name: 'SuperEmbed', url: `https://superembed.stream/movie/${tmdbId}`, type: 'embed', priority: 8 });
+            sources.push({ name: 'MoviesAPI', url: `https://moviesapi.club/movie/${tmdbId}`, type: 'embed', priority: 9 });
         }
 
         sources.sort((a, b) => a.priority - b.priority);
         return sources;
     }
 
-    // --- 2. M3U8/TS STREAM EXTRACTION FROM IFRAME ---
-    async function extractStreamFromIframe(iframeUrl) {
+    // --- 2. DIRECT STREAM EXTRACTION FROM EMBEDS ---
+    async function extractStreamFromEmbed(embedUrl) {
         try {
-            let html;
-            try {
-                html = await fetchWithProxy(iframeUrl);
-            } catch (e) {
-                console.log('[Multi-Embed] Fetch failed');
-                return null;
-            }
-
-            // Pattern 1: Direct m3u8 URLs
-            const m3u8Matches = html.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/gi);
-            if (m3u8Matches && m3u8Matches.length > 0) {
-                console.log('[Multi-Embed] Found m3u8:', m3u8Matches[0]);
-                return { type: 'hls', url: m3u8Matches[0] };
-            }
-
-            // Pattern 2: Direct mp4 URLs
-            const mp4Matches = html.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/gi);
-            if (mp4Matches && mp4Matches.length > 0) {
-                console.log('[Multi-Embed] Found mp4:', mp4Matches[0]);
-                return { type: 'mp4', url: mp4Matches[0] };
-            }
-
-            // Pattern 3: Video element src
-            const videoMatch = html.match(/<video[^>]*src=["']([^"']+)["'][^>]*>/i);
-            if (videoMatch && videoMatch[1]) {
-                const ext = videoMatch[1].split('.').pop().toLowerCase();
-                if (ext === 'm3u8' || ext === 'mp4') {
-                    return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: videoMatch[1] };
-                }
-            }
-
-            // Pattern 4: Source elements
-            const sourcePattern = /<source[^>]*src=["']([^"']+)[\"'][^>]*>/gi;
-            let sourceMatch;
-            while ((sourceMatch = sourcePattern.exec(html)) !== null) {
-                const ext = sourceMatch[1].split('.').pop().toLowerCase();
-                if (ext === 'm3u8' || ext === 'mp4') {
-                    return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: sourceMatch[1] };
-                }
-            }
-
-            // Pattern 5: Player config JSON
-            const configPatterns = [/file["']\s*:\s*["']([^"']+)["']/i, /url["']\s*:\s*["']([^"']+)["']/i, /src["']\s*:\s*["']([^"']+)["']/i];
-            for (const pattern of configPatterns) {
-                const configMatch = html.match(pattern);
-                if (configMatch && configMatch[1]) {
-                    const streamUrl = configMatch[1].replace(/\\/g, '');
-                    const ext = streamUrl.split('.').pop().toLowerCase();
-                    if (ext === 'm3u8' || ext === 'mp4') {
-                        return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: streamUrl };
-                    }
-                }
-            }
-
-            return null;
+            const html = await fetchWithProxy(embedUrl);
+            const streamInfo = parseDirectStreamPayload(html, embedUrl);
+            if (streamInfo) console.log('[Multi-Embed] Found direct stream:', streamInfo.type, streamInfo.url);
+            return streamInfo;
         } catch (error) {
-            console.error('[Multi-Embed] Error:', error.message);
+            console.error('[Multi-Embed] Extract error:', error.message);
             return null;
         }
     }
@@ -136,51 +228,24 @@
             const response = await fetch(apiUrl, { method: 'GET', mode: 'cors', redirect: 'follow' });
             if (!response.ok) throw new Error('Failed');
 
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-                const data = await response.json();
-                if (data.url) {
-                    const ext = data.url.split('.').pop().toLowerCase();
-                    if (ext === 'm3u8' || ext === 'mp4') {
-                        return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: data.url };
-                    }
-                }
-            }
+            const finalUrlStream = streamFromUrl(response.url, apiUrl);
+            if (finalUrlStream) return finalUrlStream;
 
-            const finalUrl = response.url;
-            if (finalUrl !== apiUrl) {
-                const ext = finalUrl.split('.').pop().toLowerCase();
-                if (ext === 'm3u8' || ext === 'mp4') {
-                    return { type: ext === 'm3u8' ? 'hls' : 'mp4', url: finalUrl };
-                }
-            }
-            return null;
+            const body = await response.text();
+            return parseDirectStreamPayload(body, response.url || apiUrl);
         } catch (error) {
             return null;
         }
     }
 
-    // --- 4. SOURCE TESTING ---
-    async function testSource(source) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-        try {
-            await fetch(source.url, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
-            clearTimeout(timeout);
-            return { working: true };
-        } catch (error) {
-            clearTimeout(timeout);
-            return { working: false, error: error.message };
-        }
-    }
-
-    // --- 5. LAMPA UI COMPONENT ---
+    // --- 4. LAMPA UI COMPONENT ---
     function MultiEmbedComponent(object) {
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
         var html = $('<div></div>');
         var selectedIndex = 0;
         var items = [];
+        var sourceItems = [];
 
         this.create = function() {
             scroll.minus();
@@ -197,25 +262,15 @@
             if (!itemEl || !container) return;
 
             var itemTop = itemEl.offsetTop;
-            var itemHeight = itemEl.offsetHeight;
-            var containerHeight = container.clientHeight;
-            var currentScroll = container.scrollTop;
-            var targetScroll = itemTop - (containerHeight / 2) + (itemHeight / 2);
-            var maxScroll = container.scrollHeight - containerHeight;
-            targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+            var itemBottom = itemTop + itemEl.offsetHeight;
+            var visibleTop = container.scrollTop;
+            var visibleBottom = visibleTop + container.clientHeight;
 
-            var distance = targetScroll - currentScroll;
-            var duration = 300;
-            var start = null;
-
-            function step(timestamp) {
-                if (!start) start = timestamp;
-                var progress = Math.min((timestamp - start) / duration, 1);
-                var ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
-                container.scrollTop = currentScroll + (distance * ease);
-                if (progress < 1) requestAnimationFrame(step);
+            if (itemTop < visibleTop) {
+                container.scrollTop = itemTop;
+            } else if (itemBottom > visibleBottom) {
+                container.scrollTop = itemBottom - container.clientHeight;
             }
-            requestAnimationFrame(step);
         }
 
         this.start = function() {
@@ -235,67 +290,61 @@
                     if (selectedIndex < items.length - 1) { selectedIndex++; updateFocus(); scrollToItem(selectedIndex); }
                 },
                 left: function() { Lampa.Controller.toggle('menu'); },
-                right: function() { if (items[selectedIndex]) testAndPlay(items[selectedIndex]); },
-                ok: function() { if (items[selectedIndex]) testAndPlay(items[selectedIndex]); },
+                right: function() { playSelected(); },
+                ok: function() { playSelected(); },
                 back: this.back
             });
-            Lampa.Controller.toggle('content');
             this.buildList();
+            Lampa.Controller.toggle('content');
         };
 
         function updateFocus() {
-            items.forEach((item, idx) => {
+            items.forEach(function(item, idx) {
                 idx === selectedIndex ? item.addClass('focus') : item.removeClass('focus');
             });
         }
 
+        function playSelected() {
+            if (sourceItems[selectedIndex]) testAndPlay(sourceItems[selectedIndex]);
+        }
+
         async function testAndPlay(sourceData) {
-            Lampa.Notifier.show({ title: 'Testing', text: 'Extracting stream...' });
-            const result = await testSource(sourceData);
+            Lampa.Notifier.show({ title: 'Testing', text: 'Extracting direct stream...' });
+            const streamInfo = await getDirectStreamUrl(sourceData, object.movie);
 
-            if (result.working) {
-                let streamInfo = null;
-                if (sourceData.name === 'MultiEmbed') {
-                    const tmdbId = object.movie.id;
-                    const isSeries = !!(object.movie.name && object.movie.first_air_date);
-                    const season = object.movie.season_number || object.movie.season || 1;
-                    const episode = object.movie.episode_number || object.movie.episode || 1;
-                    streamInfo = await getDirectStreamFromMultiEmbed(tmdbId, isSeries, season, episode);
-                }
-                if (!streamInfo && sourceData.type !== 'mixed') {
-                    streamInfo = await extractStreamFromIframe(sourceData.url);
-                }
-
-                if (streamInfo && streamInfo.url) {
-                    Lampa.Notifier.show({ title: 'Playing', text: streamInfo.type.toUpperCase() + ' stream', time: 2000 });
-                    Lampa.Player.play({ url: streamInfo.url, title: object.movie.title || object.movie.name, quality: streamInfo.type === 'hls' ? 'auto' : undefined });
-                } else {
-                    Lampa.Notifier.show({ title: 'Fallback', text: 'Using iframe', time: 2000 });
-                    Lampa.Player.play({ url: sourceData.url, title: object.movie.title || object.movie.name, iframe: true });
-                }
+            if (streamInfo && streamInfo.url) {
+                Lampa.Notifier.show({ title: 'Playing', text: streamInfo.type.toUpperCase() + ' stream', time: 2000 });
+                Lampa.Player.play({
+                    url: streamInfo.url,
+                    title: object.movie.title || object.movie.name,
+                    quality: streamInfo.type === 'hls' ? 'auto' : undefined
+                });
             } else {
-                Lampa.Notifier.show({ title: 'Failed', text: sourceData.name + ' not accessible', time: 3000 });
+                Lampa.Notifier.show({ title: 'No direct stream', text: 'Only direct media URLs are supported', time: 3000 });
             }
         }
 
         this.back = function() { Lampa.Activity.backward(); };
-        this.destroy = function() { scroll.destroy(); files.destroy(); html.remove(); items = []; };
+        this.destroy = function() { scroll.destroy(); files.destroy(); html.remove(); items = []; sourceItems = []; };
 
         this.buildList = function() {
             html.empty();
             items = [];
+            sourceItems = [];
             var sources = getSources(object.movie);
             selectedIndex = 0;
 
             sources.forEach(function(source, index) {
                 var item = $('<div class="online selector" style="padding:1em;margin-bottom:0.5em;background:rgba(255,255,255,0.05);border-radius:0.3em;">' +
                     '<div class="online__title" style="font-size:1.2em;font-weight:bold;">' + source.name + '</div>' +
-                    '<div class="online__quality" style="opacity:0.7;">' + (source.type === 'mixed' ? 'Direct HLS/m3u8' : 'Iframe') + ' | Press OK</div>' +
+                    '<div class="online__quality" style="opacity:0.7;">' + (source.type === 'mixed' ? 'Direct endpoint' : 'Resolver scan') + ' | Press OK</div>' +
                     '</div>');
 
-                item.on('hover:enter', function() { selectedIndex = index; updateFocus(); testAndPlay(source); });
+                item.on('hover:focus', function() { selectedIndex = index; updateFocus(); scrollToItem(selectedIndex); });
+                item.on('hover:click', function() { selectedIndex = index; updateFocus(); playSelected(); });
                 html.append(item);
                 items.push(item);
+                sourceItems.push(source);
             });
 
             scroll.append(html);
@@ -308,32 +357,29 @@
         Lampa.Component.add('multi_embed_component', MultiEmbedComponent);
     }
 
-    function openAutoEmbed(movie) {
-        const tmdbId = movie.id;
-        const isSeries = !!(movie.name && movie.first_air_date);
-        const season = movie.season_number || movie.season || 1;
-        const episode = movie.episode_number || movie.episode || 1;
-        
-        const url = isSeries 
-            ? `https://autoembed.co/tv/tmdb/${tmdbId}-${season}-${episode}`
-            : `https://autoembed.co/movie/tmdb/${tmdbId}`;
-        
-        Lampa.Player.play({ url: url, title: movie.title || movie.name, iframe: true });
+    function openMultiEmbed(movie) {
+        Lampa.Activity.push({
+            url: '',
+            title: 'Direct Streams',
+            component: 'multi_embed_component',
+            movie: movie,
+            page: 1
+        });
     }
 
     Lampa.Listener.follow('full', function(e) {
         if (e.type !== 'complite') return;
         var render = e.object.activity.render();
         var movie = e.data.movie;
-        if (render.find('.autoembed-btn').length) return;
+        if (render.find('.multiembed-btn').length) return;
 
-        var btn = $('<div class="full-start__button selector autoembed-btn" data-subtitle="AutoEmbed">⚡ Play</div>');
-        btn.on('hover:enter', function() { openAutoEmbed(movie); });
+        var btn = $('<div class="full-start__button selector multiembed-btn" data-subtitle="Direct streams">⚡ Streams</div>');
+        btn.on('hover:enter', function() { openMultiEmbed(movie); });
 
         var playBtn = render.find('.button--play');
         if (playBtn.length) playBtn.before(btn);
         else render.find('.full-start__buttons').append(btn);
     });
 
-    console.log('[AutoEmbed] Plugin initialized.');
+    console.log('[Multi-Embed] Plugin initialized.');
 })();

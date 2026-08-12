@@ -31,11 +31,9 @@ The plugin aggregates content from 9 different embed sources:
 - Hover/enter also triggers test and play
 
 ### 4. Direct Link Support
-- Sources are categorized by type:
-  - **iframe**: Traditional embedded player
-  - **mixed**: May provide direct HLS/m3u8 streams (e.g., MultiEmbed.mov)
-- The plugin attempts to fetch direct stream URLs where available
-- Uses Lampa's native iframe player for compatibility
+- Sources are resolver inputs only; embed pages are scanned for playable media but are never sent to Lampa's player.
+- MultiEmbed is tried first because it can expose direct HLS/MP4/DASH media.
+- Playback uses Lampa's native player only after a `.m3u8`, `.mp4`, or `.mpd` URL is extracted.
 
 ## Technical Implementation
 
@@ -53,8 +51,8 @@ The plugin aggregates content from 9 different embed sources:
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `iframe` | Embedded web player that loads in Lampa's iframe player | Most sources |
-| `mixed` | May redirect to direct HLS/m3u8 or provide iframe | MultiEmbed.mov |
+| `embed` | Provider page fetched and scanned for direct `.m3u8`, `.mp4`, or `.mpd` media | VidSrc, AutoEmbed, 2Embed |
+| `mixed` | Direct endpoint first, then response scanning if needed | MultiEmbed.mov |
 
 ### URL Patterns
 
@@ -76,8 +74,8 @@ The plugin aggregates content from 9 different embed sources:
 1. **Source Testing**: Added `testSource()` async function with 8-second timeout
 2. **Priority System**: Sources sorted by reliability (VidSrc.to first)
 3. **Visual Feedback**: Notifier messages show testing status and results
-4. **Type Indicators**: UI shows whether source is iframe or may provide direct HLS
-5. **Multiple Trigger Options**: Test/play on hover:enter, OK button, or Right button
+4. **Type Indicators**: UI shows whether a source is a direct endpoint or resolver scan
+5. **Multiple Trigger Options**: Test/play on click, OK button, or Right button
 
 ### Code Improvements
 - Removed problematic `Lampa.Utils.escape` calls
@@ -90,7 +88,7 @@ The plugin aggregates content from 9 different embed sources:
 1. **Installation**: Load the `ry` script in your Lampa application
 2. **Navigation**: 
    - Open any movie or TV show detail page
-   - Press the "🌐 Multi-Embed" button
+   - Press the "⚡ Streams" button
    - Use UP/DOWN to navigate sources
    - Press OK or RIGHT to test and play a source
 3. **Testing**: Sources are automatically tested when selected; working sources will begin playback
@@ -112,8 +110,16 @@ If you can't scroll down:
 
 ## Notes on Direct Streams
 
-Some sources like **MultiEmbed.mov** may return direct HLS (.m3u8) or MP4 links instead of requiring an iframe. The plugin handles both types through Lampa's player. For true direct link extraction, additional parsing of the iframe response would be required, which is beyond the scope of this plugin due to CORS restrictions.
+Some sources like **MultiEmbed.mov** may return direct HLS (`.m3u8`), MP4, or DASH links. Other providers are fetched through CORS proxies and scanned for direct media URLs, but iframe/embed pages are never used for playback because the target Lampa players do not support them.
 
 ## License
 
 This plugin is provided as-is for educational purposes. Ensure compliance with your local laws and terms of service when accessing streaming content.
+
+## Direct Stream Update
+
+The plugin no longer falls back to iframe playback for selected sources. The source picker now resolves a direct stream via `getDirectStreamUrl(source, movie)` and only calls `Lampa.Player.play` with extracted `.m3u8`, `.mp4`, or `.mpd` URLs. When no direct media URL is found, the UI displays a "No direct stream" notification because iframe embeds are not usable by the target Lampa players.
+
+### Navigation and Resolver Fix
+
+The source picker now builds the list before controller activation, tracks rendered items separately from provider metadata, and routes OK/RIGHT through `playSelected()` so the selected source object is resolved correctly. The resolver also scans encoded provider payloads, including URL-encoded and base64/base64url-looking strings, while keeping playback direct-media-only.
