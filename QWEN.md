@@ -119,7 +119,3 @@ This plugin is provided as-is for educational purposes. Ensure compliance with y
 ## Direct Stream Update
 
 The plugin no longer falls back to iframe playback for selected sources. The source picker now resolves a direct stream via `getDirectStreamUrl(source, movie)` and only calls `Lampa.Player.play` with extracted `.m3u8`, `.mp4`, or `.mpd` URLs. When no direct media URL is found, the UI displays a "No direct stream" notification because iframe embeds are not usable by the target Lampa players.
-
-### Navigation and Resolver Fix
-
-The source picker now builds the list before controller activation, tracks rendered items separately from provider metadata, and routes OK/RIGHT through `playSelected()` so the selected source object is resolved correctly. The resolver also scans encoded provider payloads, including URL-encoded and base64/base64url-looking strings, while keeping playback direct-media-only.

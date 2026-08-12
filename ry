@@ -16,7 +16,8 @@
                 const response = await fetch(proxy + encodeURIComponent(url), {
                     method: 'GET',
                     headers: {
-                        'Accept': 'text/html,application/xhtml+xml,application/json,text/plain,*/*'
+                        'Accept': 'text/html,application/xhtml+xml,application/json,text/plain,*/*',
+                        'User-Agent': 'Mozilla/5.0'
                     }
                 });
                 if (response.ok) return await response.text();
@@ -56,33 +57,6 @@
         return cleanUrl;
     }
 
-
-    function decodePotentialBase64(value) {
-        if (!value || typeof atob !== 'function') return null;
-        try {
-            const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
-            return atob(normalized);
-        } catch (e) {
-            return null;
-        }
-    }
-
-    function collectDecodedPayloads(text) {
-        const payloads = [];
-        const encodedMatches = String(text).match(/[A-Za-z0-9+/=_-]{40,}/g) || [];
-        encodedMatches.slice(0, 50).forEach(function(match) {
-            const decoded = decodePotentialBase64(match);
-            if (decoded && decoded !== match) payloads.push(decoded);
-        });
-
-        try {
-            const decodedUri = decodeURIComponent(String(text));
-            if (decodedUri !== text) payloads.push(decodedUri);
-        } catch (e) {}
-
-        return payloads;
-    }
-
     function classifyStreamUrl(url) {
         const cleanUrl = (url || '').split('#')[0].split('?')[0].toLowerCase();
         if (/\.m3u8$/.test(cleanUrl)) return 'hls';
@@ -108,13 +82,10 @@
                     if (streamInfo) return streamInfo;
                 }
             }
-            const arrayKeys = ['sources', 'tracks', 'streams', 'playlist'];
-            for (const arrayKey of arrayKeys) {
-                if (Array.isArray(payload[arrayKey])) {
-                    for (const source of payload[arrayKey]) {
-                        const streamInfo = parseDirectStreamPayload(source, baseUrl);
-                        if (streamInfo) return streamInfo;
-                    }
+            if (Array.isArray(payload.sources)) {
+                for (const source of payload.sources) {
+                    const streamInfo = parseDirectStreamPayload(source, baseUrl);
+                    if (streamInfo) return streamInfo;
                 }
             }
             return null;
@@ -129,12 +100,10 @@
         } catch (e) {}
 
         const patterns = [
-            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|mpd)(?:\?[^"'\s<>]*)?/gi,
-            /(?:file|url|src|link|hls|playlist|manifest|dash)["']?\s*[:=]\s*["']([^"']+)["']/gi,
+            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|mpd)[^"'\s<>]*/gi,
+            /(?:file|url|src|link|hls|playlist)["']?\s*[:=]\s*["']([^"']+)["']/gi,
             /<source[^>]+src=["']([^"']+)["'][^>]*>/gi,
-            /<video[^>]+src=["']([^"']+)["'][^>]*>/gi,
-            /source:\s*["']([^"']+)["']/gi,
-            /sources:\s*\[([^\]]+)\]/gi
+            /<video[^>]+src=["']([^"']+)["'][^>]*>/gi
         ];
 
         for (const pattern of patterns) {
@@ -144,12 +113,6 @@
                 const streamInfo = streamFromUrl(candidate, baseUrl);
                 if (streamInfo) return streamInfo;
             }
-        }
-
-        const decodedPayloads = collectDecodedPayloads(text);
-        for (const decodedPayload of decodedPayloads) {
-            const streamInfo = parseDirectStreamPayload(decodedPayload, baseUrl);
-            if (streamInfo) return streamInfo;
         }
 
         return null;
@@ -168,7 +131,7 @@
         const fromUrl = streamFromUrl(source.url, source.url);
         if (fromUrl) return fromUrl;
 
-        return await extractStreamFromEmbed(source.url);
+        return await extractStreamFromIframe(source.url);
     }
 
     // --- 1. SOURCES CONFIGURATION ---
@@ -206,10 +169,10 @@
     }
 
     // --- 2. DIRECT STREAM EXTRACTION FROM EMBEDS ---
-    async function extractStreamFromEmbed(embedUrl) {
+    async function extractStreamFromIframe(iframeUrl) {
         try {
-            const html = await fetchWithProxy(embedUrl);
-            const streamInfo = parseDirectStreamPayload(html, embedUrl);
+            const html = await fetchWithProxy(iframeUrl);
+            const streamInfo = parseDirectStreamPayload(html, iframeUrl);
             if (streamInfo) console.log('[Multi-Embed] Found direct stream:', streamInfo.type, streamInfo.url);
             return streamInfo;
         } catch (error) {
@@ -304,10 +267,6 @@
             });
         }
 
-        function playSelected() {
-            if (sourceItems[selectedIndex]) testAndPlay(sourceItems[selectedIndex]);
-        }
-
         async function testAndPlay(sourceData) {
             Lampa.Notifier.show({ title: 'Testing', text: 'Extracting direct stream...' });
             const streamInfo = await getDirectStreamUrl(sourceData, object.movie);
@@ -320,7 +279,7 @@
                     quality: streamInfo.type === 'hls' ? 'auto' : undefined
                 });
             } else {
-                Lampa.Notifier.show({ title: 'No direct stream', text: 'Only direct media URLs are supported', time: 3000 });
+                Lampa.Notifier.show({ title: 'No direct stream', text: 'Iframe playback is disabled for Lampa players', time: 3000 });
             }
         }
 

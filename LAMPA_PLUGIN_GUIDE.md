@@ -517,11 +517,3 @@ Lampa players should be given playable media URLs instead of iframe embed pages.
 5. If no direct stream is found, show a notification instead of falling back to iframe playback.
 
 The core helper is `getDirectStreamUrl(source, movie)`. It delegates response parsing to `parseDirectStreamPayload(payload, baseUrl)`, which handles JSON payloads, player config keys such as `file`, `url`, `src`, `link`, `hls`, and `playlist`, HTML `<source>`/`<video>` tags, escaped URLs, HTML entities, and relative links. This keeps iframe pages out of Lampa's player while still allowing providers that expose HLS, MP4, or DASH links to work natively.
-
-### Source Picker Navigation Notes
-
-The source picker keeps UI elements and source metadata in separate arrays: `items` stores rendered Lampa selector nodes, while `sourceItems` stores the provider objects. Remote OK/RIGHT now calls `playSelected()`, which resolves `sourceItems[selectedIndex]`; this avoids passing a DOM node into the stream resolver. The list is built before the content controller is toggled so Lampa has focusable items available immediately, click handlers route through the same selected-source path, and scrolling adjusts `scrollTop` only when the focused row leaves the visible viewport to avoid animation drift on TV WebViews.
-
-### Advanced Direct Media Discovery
-
-The resolver works within Lampa's client-side limitations by fetching provider pages through CORS proxies and scanning only for native media URLs. It can inspect direct response URLs, JSON objects, source arrays, player config keys, JWPlayer-style `source`/`sources` blocks, `<source>` and `<video>` tags, URL-encoded payloads, escaped JavaScript strings, relative paths, and base64/base64url-looking payloads. It never sends embed pages to `Lampa.Player.play`; playback is attempted only after a `.m3u8`, `.mp4`, or `.mpd` URL has been extracted.
