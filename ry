@@ -83,11 +83,15 @@
 
     function notify(title, text, time) {
         const message = [title, text].filter(Boolean).join(': ');
-        if (Lampa.Notifier && Lampa.Notifier.show) {
-            Lampa.Notifier.show({ title: title, text: text || '', time: time || 3000 });
-        } else if (Lampa.Noty && Lampa.Noty.show) {
-            Lampa.Noty.show(message);
-        } else {
+        try {
+            if (typeof Lampa !== 'undefined' && Lampa.Notifier && typeof Lampa.Notifier.show === 'function') {
+                Lampa.Notifier.show({ title: title || '', text: text || '', time: time || 3000 });
+            } else if (typeof Lampa !== 'undefined' && Lampa.Noty && typeof Lampa.Noty.show === 'function') {
+                Lampa.Noty.show(message);
+            } else {
+                console.log('[Multi-Embed] ' + message);
+            }
+        } catch (e) {
             console.log('[Multi-Embed] ' + message);
         }
     }
@@ -407,7 +411,7 @@
 
         function playSelected() {
             if (!sourceItems[selectedIndex]) {
-                Lampa.Notifier.show({ title: 'No source', text: 'Choose a stream source first', time: 2000 });
+                notify('No source', 'Choose a stream source first', 2000);
                 return;
             }
 
@@ -420,18 +424,26 @@
         }
 
         async function testAndPlay(sourceData) {
-            Lampa.Notifier.show({ title: 'Testing', text: 'Extracting direct stream...' });
+            notify('Testing', 'Extracting direct stream...', 2000);
             const streamInfo = await getDirectStreamUrl(sourceData, object.movie);
 
             if (streamInfo && streamInfo.url) {
-                Lampa.Notifier.show({ title: 'Playing', text: sourceData.name + ' ' + streamInfo.type.toUpperCase() + ' stream', time: 2000 });
-                Lampa.Player.play({
-                    url: streamInfo.url,
-                    title: object.movie.title || object.movie.name,
-                    quality: streamInfo.type === 'hls' ? 'auto' : undefined
-                });
+                notify('Playing', sourceData.name + ' ' + streamInfo.type.toUpperCase() + ' stream', 2000);
+                try {
+                    if (typeof Lampa !== 'undefined' && typeof Lampa.Player !== 'undefined' && typeof Lampa.Player.play === 'function') {
+                        Lampa.Player.play({
+                            url: streamInfo.url,
+                            title: object.movie.title || object.movie.name,
+                            quality: streamInfo.type === 'hls' ? 'auto' : undefined
+                        });
+                    } else {
+                        notify('Error', 'Player not available', 3000);
+                    }
+                } catch (e) {
+                    notify('Error', 'Failed to play: ' + e.message, 3000);
+                }
             } else {
-                Lampa.Notifier.show({ title: 'No direct stream', text: sourceData.name + ' did not expose a playable media link', time: 3000 });
+                notify('No direct stream', sourceData.name + ' did not expose a playable media link', 3000);
             }
         }
 
@@ -442,7 +454,7 @@
         this.autoSelectBestSource = async function() {
             if (sourceItems.length === 0) return;
             
-            Lampa.Notifier.show({ title: 'Auto-Select', text: 'Finding best source...', time: 2000 });
+            notify('Auto-Select', 'Finding best source...', 2000);
             
             var bestIndex = 0;
             var bestScore = -1;
@@ -524,11 +536,11 @@
 
     function openMultiEmbed(movie) {
         // Fully automatic - skip UI and play best source immediately
-        Lampa.Notifier.show({ title: '⚡ Auto-Play', text: 'Finding best source...', time: 2000 });
+        notify('⚡ Auto-Play', 'Finding best source...', 2000);
         
         const sources = getSources(movie);
         if (sources.length === 0) {
-            Lampa.Notifier.show({ title: 'Error', text: 'No sources available', time: 3000 });
+            notify('Error', 'No sources available', 3000);
             return;
         }
         
@@ -568,18 +580,22 @@
         
         if (bestStream) {
             console.log('[Multi-Embed] Playing best source:', bestStream.source.name, 'Score:', bestStream.score);
-            Lampa.Notifier.show({ 
-                title: 'Playing', 
-                text: bestStream.source.name + ' - ' + bestStream.stream.type.toUpperCase() + ' stream', 
-                time: 2000 
-            });
-            Lampa.Player.play({
-                url: bestStream.stream.url,
-                title: movie.title || movie.name,
-                quality: bestStream.stream.type === 'hls' ? 'auto' : undefined
-            });
+            notify('Playing', bestStream.source.name + ' - ' + bestStream.stream.type.toUpperCase() + ' stream', 2000);
+            try {
+                if (typeof Lampa !== 'undefined' && typeof Lampa.Player !== 'undefined' && typeof Lampa.Player.play === 'function') {
+                    Lampa.Player.play({
+                        url: bestStream.stream.url,
+                        title: movie.title || movie.name,
+                        quality: bestStream.stream.type === 'hls' ? 'auto' : undefined
+                    });
+                } else {
+                    notify('Error', 'Player not available', 3000);
+                }
+            } catch (e) {
+                notify('Error', 'Failed to play: ' + e.message, 3000);
+            }
         } else {
-            Lampa.Notifier.show({ title: 'Error', text: 'No working streams found', time: 3000 });
+            notify('Error', 'No working streams found', 3000);
         }
     }
 
