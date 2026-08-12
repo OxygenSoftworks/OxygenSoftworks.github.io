@@ -3,40 +3,30 @@
     if (window.MultiEmbedPlugin) return;
     window.MultiEmbedPlugin = true;
 
-    // --- CORS PROXY FOR EMBED PAGE FETCHING ---
-    const CORS_PROXIES = [
-        'https://api.allorigins.win/raw?url=',
-        'https://corsproxy.io/?',
-        'https://thingproxy.freeboard.io/fetch/',
-        'https://cors.bridged.cc/',
-        'https://proxy.zupeez.workers.dev/?',
-        'https://isomorphic-git.org/downloads/cors-proxy/?',
-        'https://codetabs.com/cors-proxy/cors-proxy.php?proxy='
-    ];
+    // --- CORS PROXY - Using ONLY corsproxy.io with key ---
+    const CORS_KEY = '544f778e';
+    const CORS_PROXY = `https://corsproxy.io/?${CORS_KEY}&`;
     
     async function fetchWithProxy(url) {
-        for (const proxy of CORS_PROXIES) {
-            try {
-                const response = await fetch(proxy + encodeURIComponent(url), {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'text/html,application/xhtml+xml,application/json,text/plain,*/*',
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Referer': url,
-                        'Origin': new URL(proxy).origin
-                    },
-                    redirect: 'follow'
-                });
-                if (response.ok) {
-                    const text = await response.text();
-                    if (text && text.length > 100) return text;
-                }
-            } catch (e) {
-                console.log('[Multi-Embed] Proxy failed:', proxy.substring(0, 30));
-                continue;
+        try {
+            const response = await fetch(CORS_PROXY + encodeURIComponent(url), {
+                method: 'GET',
+                headers: {
+                    'Accept': 'text/html,application/xhtml+xml,application/json,text/plain,*/*',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': url
+                },
+                redirect: 'follow'
+            });
+            if (response.ok) {
+                const text = await response.text();
+                if (text && text.length > 100) return text;
             }
+            throw new Error(`HTTP ${response.status}`);
+        } catch (e) {
+            console.log('[Multi-Embed] Proxy failed:', e.message);
+            throw e;
         }
-        throw new Error('All proxies failed');
     }
 
     function decodeHtmlEntities(value) {
@@ -159,14 +149,40 @@
 
         const text = String(payload);
         
-        // First try direct URL extraction using m3u8Sniffer-style pattern
-        const m3u8Pattern = /http[s]?:\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;]*[-A-Za-z0-9+&@#/%=~_|]*\.m3u8(?:\?[^\s"']*)?/gi;
+        // First try direct URL extraction using m3u8Sniffer-style pattern (comprehensive)
+        // Pattern from m3u8Sniffer: matches any http(s) URL containing .m3u8 with optional query params
+        const m3u8Pattern = /https?:\/\/[^\s"'<>]*\.m3u8[^\s"'<>]*/gi;
+        const mp4Pattern = /https?:\/\/[^\s"'<>]*\.mp4[^\s"'<>]*/gi;
+        const tsPattern = /https?:\/\/[^\s"'<>]*\.ts[^\s"'<>]*/gi;
+        
         let match;
+        
+        // Try m3u8 first (highest priority for adaptive streaming)
         while ((match = m3u8Pattern.exec(text)) !== null) {
-            const candidate = match[0];
+            const candidate = match[0].replace(/[)]$/, ''); // Clean trailing parens
             const streamInfo = streamFromUrl(candidate, baseUrl);
             if (streamInfo) {
-                console.log('[Multi-Embed] Found m3u8 via sniffer pattern');
+                console.log('[Multi-Embed] Found m3u8 via sniffer pattern:', candidate.substring(0, 100));
+                return streamInfo;
+            }
+        }
+        
+        // Try mp4
+        while ((match = mp4Pattern.exec(text)) !== null) {
+            const candidate = match[0].replace(/[)]$/, '');
+            const streamInfo = streamFromUrl(candidate, baseUrl);
+            if (streamInfo) {
+                console.log('[Multi-Embed] Found mp4 via sniffer pattern:', candidate.substring(0, 100));
+                return streamInfo;
+            }
+        }
+        
+        // Try ts
+        while ((match = tsPattern.exec(text)) !== null) {
+            const candidate = match[0].replace(/[)]$/, '');
+            const streamInfo = streamFromUrl(candidate, baseUrl);
+            if (streamInfo) {
+                console.log('[Multi-Embed] Found ts via sniffer pattern:', candidate.substring(0, 100));
                 return streamInfo;
             }
         }
@@ -174,7 +190,7 @@
         // Enhanced regex patterns for various embed formats
         const patterns = [
             // Direct media URLs with more extensions
-            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|mpd|ts|m4s)[^"'\s<>]*/gi,
+            /https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|ts|m4s)[^"'\s<>]*/gi,
             // Common player config patterns
             /(?:file|url|src|link|hls|playlist|data-url)["']?\s*[:=]\s*["']([^"']+)["']/gi,
             /(?:file|url|src|link|hls|playlist)["']?\s*[:=]\s*["']?([^"'\s}]+)["']?/gi,
@@ -188,7 +204,7 @@
             // HLS.js and other players
             /loadSource\(["']([^"']+)["']\)/gi,
             // General URL patterns with query params
-            /https?:\/\/[^\s"']+\/(?:hls|stream|video|playlist)[^\s"']*\.(?:m3u8|mp4|mpd|ts)[^\s"']*/gi
+            /https?:\/\/[^\s"']+\/(?:hls|stream|video|playlist)[^\s"']*\.(?:m3u8|mp4|ts)[^\s"']*/gi
         ];
 
         for (const pattern of patterns) {
