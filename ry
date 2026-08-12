@@ -65,6 +65,35 @@
         return null;
     }
 
+
+    function notify(title, text, time) {
+        const message = [title, text].filter(Boolean).join(': ');
+        if (Lampa.Notifier && Lampa.Notifier.show) {
+            Lampa.Notifier.show({ title: title, text: text || '', time: time || 3000 });
+        } else if (Lampa.Noty && Lampa.Noty.show) {
+            Lampa.Noty.show(message);
+        } else {
+            console.log('[Multi-Embed] ' + message);
+        }
+    }
+
+    function errorMessage(error) {
+        if (!error) return 'Unknown error';
+        return error.message || String(error);
+    }
+
+    function openPlayer(streamInfo, sourceData, movie) {
+        const entry = {
+            url: streamInfo.url,
+            title: movie.title || movie.name || sourceData.name,
+            quality: streamInfo.type === 'hls' ? 'auto' : undefined
+        };
+
+        console.log('[Multi-Embed] Playing source:', sourceData.name, entry);
+        Lampa.Player.play(entry);
+        if (Lampa.Player.playlist) Lampa.Player.playlist([entry]);
+    }
+
     function streamFromUrl(url, baseUrl) {
         const normalizedUrl = normalizeStreamUrl(url, baseUrl);
         const type = classifyStreamUrl(normalizedUrl);
