@@ -300,7 +300,7 @@
 
         function playSelected() {
             if (!sourceItems[selectedIndex]) {
-                notify('No source', 'Choose a stream source first', 2000);
+                Lampa.Notifier.show({ title: 'No source', text: 'Choose a stream source first', time: 2000 });
                 return;
             }
 
@@ -313,20 +313,18 @@
         }
 
         async function testAndPlay(sourceData) {
-            try {
-                notify('Testing ' + sourceData.name, 'Extracting direct stream...', 2000);
-                const streamInfo = await getDirectStreamUrl(sourceData, object.movie);
+            Lampa.Notifier.show({ title: 'Testing', text: 'Extracting direct stream...' });
+            const streamInfo = await getDirectStreamUrl(sourceData, object.movie);
 
-                if (streamInfo && streamInfo.url) {
-                    notify('Playing', sourceData.name + ' ' + streamInfo.type.toUpperCase() + ' stream', 2000);
-                    openPlayer(streamInfo, sourceData, object.movie);
-                } else {
-                    notify('No direct stream', sourceData.name + ' did not expose a playable media link', 5000);
-                    console.warn('[Multi-Embed] No playable media URL found for source:', sourceData);
-                }
-            } catch (error) {
-                console.error('[Multi-Embed] Playback error for ' + sourceData.name + ':', error);
-                notify('Playback error', sourceData.name + ': ' + errorMessage(error), 7000);
+            if (streamInfo && streamInfo.url) {
+                Lampa.Notifier.show({ title: 'Playing', text: sourceData.name + ' ' + streamInfo.type.toUpperCase() + ' stream', time: 2000 });
+                Lampa.Player.play({
+                    url: streamInfo.url,
+                    title: object.movie.title || object.movie.name,
+                    quality: streamInfo.type === 'hls' ? 'auto' : undefined
+                });
+            } else {
+                Lampa.Notifier.show({ title: 'No direct stream', text: sourceData.name + ' did not expose a playable media link', time: 3000 });
             }
         }
 
