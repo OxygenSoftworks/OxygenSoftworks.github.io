@@ -95,9 +95,9 @@
     function notify(title, text, time) {
         const message = [title, text].filter(Boolean).join(': ');
         try {
-            if (typeof Lampa !== 'undefined' && Lampa.Notifier && typeof Lampa.Notifier.show === 'function') {
+            if (typeof Lampa !== 'undefined' && Lampa && Lampa.Notifier && typeof Lampa.Notifier.show === 'function') {
                 Lampa.Notifier.show({ title: title || '', text: text || '', time: time || 3000 });
-            } else if (typeof Lampa !== 'undefined' && Lampa.Noty && typeof Lampa.Noty.show === 'function') {
+            } else if (typeof Lampa !== 'undefined' && Lampa && Lampa.Noty && typeof Lampa.Noty.show === 'function') {
                 Lampa.Noty.show(message);
             } else {
                 console.log('[Multi-Embed] ' + message);
@@ -120,8 +120,15 @@
         };
 
         console.log('[Multi-Embed] Playing source:', sourceData.name, entry);
-        Lampa.Player.play(entry);
-        if (Lampa.Player.playlist) Lampa.Player.playlist([entry]);
+        
+        if (typeof Lampa !== 'undefined' && Lampa && Lampa.Player && typeof Lampa.Player.play === 'function') {
+            Lampa.Player.play(entry);
+            if (Lampa.Player.playlist && typeof Lampa.Player.playlist === 'function') {
+                Lampa.Player.playlist([entry]);
+            }
+        } else {
+            notify('Error', 'Player not available', 3000);
+        }
     }
 
     function streamFromUrl(url, baseUrl) {
@@ -152,16 +159,18 @@
 
         const text = String(payload);
         
-        // First try direct URL extraction
-        const directUrl = streamFromUrl(text, baseUrl);
-        if (directUrl) return directUrl;
-
-        // Try JSON parsing
-        try {
-            const json = JSON.parse(text);
-            return parseDirectStreamPayload(json, baseUrl);
-        } catch (e) {}
-
+        // First try direct URL extraction using m3u8Sniffer-style pattern
+        const m3u8Pattern = /http[s]?:\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;]*[-A-Za-z0-9+&@#/%=~_|]*\.m3u8(?:\?[^\s"']*)?/gi;
+        let match;
+        while ((match = m3u8Pattern.exec(text)) !== null) {
+            const candidate = match[0];
+            const streamInfo = streamFromUrl(candidate, baseUrl);
+            if (streamInfo) {
+                console.log('[Multi-Embed] Found m3u8 via sniffer pattern');
+                return streamInfo;
+            }
+        }
+        
         // Enhanced regex patterns for various embed formats
         const patterns = [
             // Direct media URLs with more extensions
@@ -384,6 +393,11 @@
 
     // --- 4. LAMPA UI COMPONENT ---
     function MultiEmbedComponent(object) {
+        if (typeof Lampa === 'undefined' || !Lampa) {
+            console.error('[Multi-Embed] Lampa API not available');
+            return;
+        }
+        
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
         var html = $('<div></div>');
@@ -418,30 +432,36 @@
         }
 
         this.start = function() {
+            if (typeof Lampa === 'undefined' || !Lampa || !Lampa.Activity) return;
             if (Lampa.Activity.active().activity !== this.activity) return;
-            Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
+            
+            if (Lampa.Background && Lampa.Utils) {
+                Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
+            }
 
-            Lampa.Controller.add('content', {
-                toggle: function() {
-                    Lampa.Controller.collectionSet(scroll.render(), files.render());
-                    Lampa.Controller.collectionFocus(false, scroll.render());
-                },
-                up: function() {
-                    if (selectedIndex > 0) { selectedIndex--; updateFocus(); scrollToItem(selectedIndex); }
-                    else Lampa.Controller.toggle('head');
-                },
-                down: function() {
-                    if (selectedIndex < items.length - 1) { selectedIndex++; updateFocus(); scrollToItem(selectedIndex); }
-                },
-                left: function() { Lampa.Controller.toggle('menu'); },
-                right: function() { playSelected(); },
-                ok: function() { playSelected(); },
-                back: this.back
-            });
+            if (Lampa.Controller) {
+                Lampa.Controller.add('content', {
+                    toggle: function() {
+                        if (Lampa.Controller.collectionSet) Lampa.Controller.collectionSet(scroll.render(), files.render());
+                        if (Lampa.Controller.collectionFocus) Lampa.Controller.collectionFocus(false, scroll.render());
+                    },
+                    up: function() {
+                        if (selectedIndex > 0) { selectedIndex--; updateFocus(); scrollToItem(selectedIndex); }
+                        else if (Lampa.Controller.toggle) Lampa.Controller.toggle('head');
+                    },
+                    down: function() {
+                        if (selectedIndex < items.length - 1) { selectedIndex++; updateFocus(); scrollToItem(selectedIndex); }
+                    },
+                    left: function() { if (Lampa.Controller.toggle) Lampa.Controller.toggle('menu'); },
+                    right: function() { playSelected(); },
+                    ok: function() { playSelected(); },
+                    back: this.back
+                });
+            }
             this.buildList();
             // Auto-select best source on load
             this.autoSelectBestSource();
-            Lampa.Controller.toggle('content');
+            if (Lampa.Controller && Lampa.Controller.toggle) Lampa.Controller.toggle('content');
         };
 
         function updateFocus() {
@@ -473,7 +493,7 @@
             if (streamInfo && streamInfo.url) {
                 notify('Playing', sourceData.name + ' ' + streamInfo.type.toUpperCase() + ' stream', 2000);
                 try {
-                    if (typeof Lampa !== 'undefined' && typeof Lampa.Player !== 'undefined' && typeof Lampa.Player.play === 'function') {
+                    if (typeof Lampa !== 'undefined' && Lampa && Lampa.Player && typeof Lampa.Player.play === 'function') {
                         Lampa.Player.play({
                             url: streamInfo.url,
                             title: object.movie.title || object.movie.name,
@@ -490,7 +510,11 @@
             }
         }
 
-        this.back = function() { Lampa.Activity.backward(); };
+        this.back = function() { 
+            if (typeof Lampa !== 'undefined' && Lampa && Lampa.Activity) {
+                Lampa.Activity.backward(); 
+            }
+        };
         this.destroy = function() { scroll.destroy(); files.destroy(); html.remove(); items = []; sourceItems = []; };
 
         // Auto-select the best source based on quality score and speed test
@@ -569,11 +593,13 @@
 
             scroll.append(html);
             if (items.length > 0) items[0].addClass('focus');
-            Lampa.Controller.enable('content');
+            if (typeof Lampa !== 'undefined' && Lampa && Lampa.Controller && Lampa.Controller.enable) {
+                Lampa.Controller.enable('content');
+            }
         };
     }
 
-    if (Lampa.Component && Lampa.Component.add) {
+    if (typeof Lampa !== 'undefined' && Lampa && Lampa.Component && Lampa.Component.add) {
         Lampa.Component.add('multi_embed_component', MultiEmbedComponent);
     }
 
@@ -638,7 +664,7 @@
             console.log('[Multi-Embed] Playing best source:', bestStream.source.name, 'Score:', bestStream.score);
             notify('Playing', bestStream.source.name + ' - ' + bestStream.stream.type.toUpperCase() + ' stream', 2000);
             try {
-                if (typeof Lampa !== 'undefined' && typeof Lampa.Player !== 'undefined' && typeof Lampa.Player.play === 'function') {
+                if (typeof Lampa !== 'undefined' && Lampa && Lampa.Player && typeof Lampa.Player.play === 'function') {
                     Lampa.Player.play({
                         url: bestStream.stream.url,
                         title: movie.title || movie.name,
@@ -657,13 +683,19 @@
     }
 
     Lampa.Listener.follow('full', function(e) {
+        if (typeof Lampa === 'undefined' || !Lampa) return;
         if (e.type !== 'complite') return;
         var render = e.object.activity.render();
         var movie = e.data.movie;
+        if (!render || !movie) return;
         if (render.find('.multiembed-btn').length) return;
 
         var btn = $('<div class="full-start__button selector multiembed-btn" data-subtitle="Direct streams">⚡ Streams</div>');
-        btn.on('hover:enter', function() { openMultiEmbed(movie); });
+        btn.on('hover:enter', function() { 
+            if (typeof Lampa !== 'undefined' && Lampa) {
+                openMultiEmbed(movie); 
+            }
+        });
 
         var playBtn = render.find('.button--play');
         if (playBtn.length) playBtn.before(btn);
