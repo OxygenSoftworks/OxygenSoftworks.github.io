@@ -3,13 +3,18 @@
     if (window.MultiEmbedPlugin) return;
     window.MultiEmbedPlugin = true;
 
-    // --- NO CORS PROXY NEEDED - Using direct fetch with proper headers like cinepro-core ---
-    // Credits: Provider logic inspired by https://github.com/cinepro-org/core
+    // --- Provider logic inspired by https://github.com/cinepro-org/core ---
+    // Using direct fetch with proper headers (no external CORS proxy needed)
+    // cinepro-core uses @omss/framework's createProxyUrl internally for server-side requests
+    // For browser-based Lampa plugin, we use direct fetch with appropriate headers
     
     const DEFAULT_HEADERS = {
         'Accept': 'text/html,application/xhtml+xml,application/json,*/*',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
     };
     
     async function fetchWithHeaders(url, customHeaders = {}) {
@@ -17,7 +22,8 @@
             const response = await fetch(url, {
                 method: 'GET',
                 headers: { ...DEFAULT_HEADERS, ...customHeaders },
-                redirect: 'follow'
+                redirect: 'follow',
+                credentials: 'omit'
             });
             if (response.ok) {
                 const text = await response.text();
@@ -25,7 +31,7 @@
             }
             throw new Error(`HTTP ${response.status}`);
         } catch (e) {
-            console.log('[Multi-Embed] Fetch failed:', e.message);
+            console.log('[Multi-Embed] Fetch failed for', url.substring(0, 80), ':', e.message);
             throw e;
         }
     }
@@ -660,6 +666,7 @@
         
         console.log('[Multi-Embed] Testing', sources.length, 'sources for:', movie.title || movie.name);
         console.log('[Multi-Embed] Provider logic inspired by https://github.com/cinepro-org/core');
+        console.log('[Multi-Embed] See: vidsrc.ts, vidzee.ts, vidrock.ts in cinepro-core/src/providers/');
         
         // Test all sources concurrently with timeout
         var testPromises = sources.map(async function(source) {
@@ -741,4 +748,5 @@
     });
 
     console.log('[Multi-Embed] Plugin initialized.');
+    console.log('[Multi-Embed] Provider implementations inspired by https://github.com/cinepro-org/core');
 })();
